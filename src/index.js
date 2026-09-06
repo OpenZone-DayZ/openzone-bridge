@@ -1427,8 +1427,7 @@ async function wipePlayer(uid, serverId = '') {
 
     if (discordId && c.threadId) {
       try {
-        const th = await discord.client.channels.fetch(c.threadId);
-        await th.members.remove(discordId);
+        await discord.removeFromThread(c.threadId, discordId);
       } catch {
         // Тред мiг зникнути, або учасника там уже немає -- склад у сторi
         // все одно виправляється нижче.
