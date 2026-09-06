@@ -42,6 +42,14 @@ export function authorOf(m, botId, store) {
   return store.steamIdOf(m.author.id) || '';
 }
 
+// The bot's fallback format, undone: without a webhook a line goes out as
+// "**Who**: text", and the game wants the speaker in his own column. Written
+// out twice with the same regexp before.
+export function unwrapSpeaker(who, text) {
+  const cut = String(text).match(/^\*\*(.{1,80}?)\*\*: ([\s\S]*)$/);
+  return cut ? { who: cut[1], text: cut[2] } : { who, text };
+}
+
 export class DiscordSide {
   constructor(cfg, store, onMessage) {
     this.cfg = cfg;
@@ -73,9 +81,6 @@ export class DiscordSide {
     });
 
     this.client.on('messageCreate', (m) => this.#incoming(m));
-    // Notes follow Discord: a deleted message means a deleted note.
-    this.client.on('messageDelete', (m) => {
-    });
 
     // МЕЖА ПОМИЛОК, і вона тут не про охайність.
     //
@@ -154,7 +159,6 @@ export class DiscordSide {
     this.webhook = await this.#ensureWebhook();
     await this.#registerCommands();
     await this.#ensureCommandChannel();
-    await this.#syncNewRoles();
     await this.#warmMembers();
     console.log(`[discord] logged in as ${this.client.user.tag}`);
   }
@@ -505,19 +509,6 @@ export class DiscordSide {
     const r = await this.#makeCommandChannel();
     if (r.ok) console.log(`[discord] command channel #${r.channel.name} created`);
     else console.warn(`[discord] ${r.why}; commands are allowed anywhere`);
-  }
-
-  // The guild's roles follow the tables only while the roles mirror is on,
-  // and at start-up no server has said so yet -- so this is a no-op on a
-  // plain restart and a full warm when a server reports the kind before the
-  // ready event is over. drain() warms again when the kind comes on later.
-  async #syncNewRoles() {
-    if (!this.rolesMirror) return;
-    try {
-      await this.rolesMirror.warm(this.guild);
-    } catch (e) {
-      console.warn(`[discord] could not warm the roles mirror (${e.message})`);
-    }
   }
 
   // One channel by id, with the three answers kept apart.
@@ -955,22 +946,15 @@ export class DiscordSide {
   // to change instead of dying on it: a chat that works badly beats a bridge
   // that will not start.
   async #ensureWebhook() {
-    try {
-      const hooks = await this.parent.fetchWebhooks();
-      const mine = hooks.find((h) => h.owner?.id === this.client.user.id);
-      if (mine) return mine;
-      return await this.parent.createWebhook({
-        name: 'OpenZone',
-        reason: 'carries in-game messages under each stalker own name',
-      });
-    } catch (err) {
+    const hook = await this.#webhookOn(this.parent);
+    if (!hook) {
       console.warn(
-        `[discord] no webhook (${err.message}). Messages will be posted by the bot with the ` +
-          "speaker's name in front. Grant Manage Webhooks on the parent channel to give every " +
-          'stalker their own name in the thread.',
+        "[discord] messages will be posted by the bot with the speaker's name in front. " +
+          'Grant Manage Webhooks on the parent channel to give every stalker their own ' +
+          'name in the thread.',
       );
-      return null;
     }
+    return hook;
   }
 
   // A message appeared in Discord. If it belongs to a conversation we know,
@@ -994,11 +978,7 @@ export class DiscordSide {
     // Undo the fallback format, so the game shows the speaker in its own
     // column instead of a bold blob inside the line.
     if (!m.webhookId && m.author.id === this.client.user.id) {
-      const cut = text.match(/^\*\*(.{1,80}?)\*\*: ([\s\S]*)$/);
-      if (cut) {
-        who = cut[1];
-        text = cut[2];
-      }
+      ({ who, text } = unwrapSpeaker(who, text));
     }
 
     // Ours if we are the ones who sent it. Otherwise, whoever typed it in
@@ -1063,11 +1043,11 @@ export class DiscordSide {
   async ensureThread(key, title, memberDiscordIds) {
     const known = this.store.convo(key);
     if (known?.threadId) {
-      // ONLY "GONE" MEANS GONE -- the same discipline as fetchThread and
-      // #lookUp right below. This caught EVERY failure and built a second
-      // thread: a rate limit, a five-hundred, a member who could not be
-      // re-added, an un-archive that did not take. Each one left an orphan
-      // in the guild and moved the conversation to a thread nobody was in.
+      // ONLY "GONE" MEANS GONE -- the same discipline as #lookUp below.
+      // This caught EVERY failure and built a second thread: a rate limit,
+      // a five-hundred, a member who could not be re-added, an un-archive
+      // that did not take. Each one left an orphan in the guild and moved
+      // the conversation to a thread nobody was in.
       let th = null;
       try {
         th = await this.client.channels.fetch(known.threadId);
@@ -1099,19 +1079,6 @@ export class DiscordSide {
     await this.#invite(th, memberDiscordIds);
     return th;
   }
-
-  // --- notes ---
-  //
-  // Notes never touch the conversation index: a notebook thread is not a
-  // chat and must not show up in /v1/chat/list. These helpers give the
-  // Notes module the same machinery conversations use, minus the index.
-  //
-  // Notebooks live in THEIR OWN channel, not the chat parent, and that is
-  // what makes them read-only: a thread has no permissions of its own, it
-  // inherits the channel -- so the chat parent must allow writing in
-  // threads (conversations!) while the notebook channel denies it. Only
-  // the bot and its webhook write there; a player sees their thread and
-  // cannot type into it. The owner asked for exactly this on 2026-08-28.
 
   // --- typed thread homes ---
   //
@@ -1269,33 +1236,6 @@ export class DiscordSide {
     if (th) await th.members.remove(discordId);
   }
 
-  // Three answers, never conflated -- the same discipline as #lookUp.
-  // A note book must NOT be wiped because Discord had a 500: `gone` is only
-  // 10003 Unknown Channel / 10004 Unknown/10008 Unknown Message-thread;
-  // every other failure is `unsure` and the caller must leave the index
-  // alone. Returning bare null (deleted) for a transient error is exactly
-  // how a routine hiccup used to erase a player's whole notebook.
-  async fetchThread(threadId) {
-    try {
-      const th = await this.client.channels.fetch(threadId);
-      if (!th) return { gone: true };
-      if (th.archived) {
-        // Un-archiving can itself fail transiently; that is NOT proof the
-        // thread is gone, so a failure here still returns the thread.
-        try { await th.setArchived(false); } catch { /* keep the thread */ }
-      }
-      return { thread: th };
-    } catch (e) {
-      if (e && (e.code === 10003 || e.code === 10004)) return { gone: true };
-      return { unsure: true, why: e && e.message };
-    }
-  }
-
-
-  // A page of thread history BEFORE the given message id (or the newest
-  // page when no anchor). Returned oldest-first, each line already shaped
-  // for the game: webhook posts wear the speaker's name as the author, our
-  // bot fallback posts carry it bolded in the text and are unwrapped here.
   // Delete one message in a thread or channel. The zone lives in a plain
   // channel and every other conversation in a thread; channels.fetch
   // resolves both, so one door serves the whole mark-TTL sweep.
@@ -1346,11 +1286,7 @@ export class DiscordSide {
       let who = m.member?.displayName || m.author?.username || '';
       let text = m.content || '';
       if (!m.webhookId && m.author?.id === this.client.user.id) {
-        const cut = text.match(/^\*\*(.{1,80}?)\*\*: ([\s\S]*)$/);
-        if (cut) {
-          who = cut[1];
-          text = cut[2];
-        }
+        ({ who, text } = unwrapSpeaker(who, text));
       }
       // Who said it: the rule lives in authorOf at the top of this file.
       const uid = authorOf(m, this.client.user.id, this.store);
@@ -1387,7 +1323,7 @@ export class DiscordSide {
       if (mine) return mine;
       return await channel.createWebhook({
         name: 'OpenZone',
-        reason: 'posts notebook entries under each stalker own name',
+        reason: 'posts in-game messages under each stalker own name',
       });
     } catch (err) {
       console.warn(`[discord] no webhook on #${channel.name} (${err.message}); the bot posts plainly`);
@@ -1521,8 +1457,17 @@ export class DiscordSide {
     if (at < 0) return null;
 
     const [entry] = this.pending.splice(at, 1);
+    // Once per tier per thread, not once per line: a player whose name
+    // Discord rewrites produces this on every single thing he says, and the
+    // point of the line is to notice the normalisation changed, which the
+    // first one already says.
     if (tier !== 'exact') {
-      console.log(`[discord] echo matched via ${tier} tier (thread ${threadId}); Discord normalised something`);
+      this.tiersSaid ??= new Set();
+      const said = tier + '|' + threadId;
+      if (!this.tiersSaid.has(said)) {
+        this.tiersSaid.add(said);
+        console.log(`[discord] echo matched via ${tier} tier (thread ${threadId}); Discord normalised something`);
+      }
     }
 
     // THE ENTRY, not entry.uid. An anonymous send files a claim whose uid is

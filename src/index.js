@@ -147,7 +147,9 @@ const roles = new Roles(store);
 const rolesMirror = new RolesMirror(roles, store, { isOn: () => anyMirrored('roles') });
 discord.useRoles(roles);
 discord.useRolesMirror(rolesMirror);
-const personas = new Personas('./state/personas.json');
+// The store is their home; the old file beside it is read once, if it is
+// still there, and never written again.
+const personas = new Personas(store, join(dirname(cfg.dbPath), 'personas.json'));
 discord.usePersonas(personas);
 
 // Реєстр мусить уміти спитати, чи прив'язаний акаунт: без цього роль на

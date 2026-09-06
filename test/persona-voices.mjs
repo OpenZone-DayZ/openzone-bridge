@@ -15,10 +15,13 @@
 import { existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Store } from '../src/store.js';
 import { Personas } from '../src/personas.js';
 
-const path = join(tmpdir(), `oz-personas-${process.pid}.json`);
-if (existsSync(path)) unlinkSync(path);
+// A throwaway store: personas live in the base like everything else.
+const path = join(tmpdir(), `oz-personas-${process.pid}.sqlite`);
+for (const f of [path, path + '-wal', path + '-shm']) if (existsSync(f)) unlinkSync(f);
+const store = new Store(path);
 
 let pass = 0;
 let fail = 0;
@@ -32,7 +35,7 @@ function ok(what, got, want) {
   console.log(`  FAIL ${what}\n       got  ${JSON.stringify(got)}\n       want ${JSON.stringify(want)}`);
 }
 
-const p = new Personas(path);
+const p = new Personas(store);
 p.create('Сидорович', 'admin');
 p.create('Бармен', 'admin');
 p.create('Лебедєв', 'admin');

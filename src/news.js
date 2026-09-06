@@ -170,27 +170,38 @@ export class News {
     // IS the reply count -- subtracting one here ate a reply per post.
     post.Replies = Math.max(0, th.messageCount || 0);
 
-    if (!known || warm || !post.Body) {
+    // ASKED ONCE PER POST, NOT ONCE PER REPLY. threadUpdate fires on every
+    // reply in the forum, and a post whose starter message was deleted has
+    // no body to find -- so this went back to Discord over REST for that
+    // same missing message on every reply to that thread, for ever.
+    if (!known || warm || (!post.Body && !post.noStarter)) {
       try {
         const starter = await th.fetchStarterMessage();
         post.Body = byteClip(starter?.content || '', BODY_MAX);
         post.Who = starter?.member?.displayName || starter?.author?.username || post.Who;
+        post.noStarter = false;
       } catch {
-        // Starter deleted: the post keeps its title and an empty body.
+        // Starter deleted: the post keeps its title and an empty body, and
+        // we stop asking. An edit to the starter would arrive as its own
+        // event (#onStarter), which clears the flag by writing a body.
+        post.noStarter = true;
       }
     }
 
+    const fresh = !known;
     this.#keep(post);
 
     // The cap holds on live inserts too, not only at warm-up. Safe to drop
     // in a way chat is not: news are authored in Discord and stay there, so
-    // an evicted post is still where it was written.
-    if (this.posts.size > KEEP) {
+    // an evicted post is still where it was written. Only an INSERT can
+    // cross the cap -- an update of a post we already had cannot -- and the
+    // store trims itself with the same rule.
+    if (fresh && this.posts.size > KEEP) {
       const oldest = [...this.posts.values()].sort((a, b) => a.ts - b.ts)[0];
       this.posts.delete(oldest.Id);
       this.store?.newsDrop(oldest.Id);
+      this.store?.newsTrim(KEEP);
     }
-    this.store?.newsTrim(KEEP);
   }
 
   #onStarter(m) {
@@ -198,6 +209,7 @@ export class News {
     if (!p) return;
     p.Body = byteClip(m.content || '', BODY_MAX);
     p.Who = m.member?.displayName || m.author?.username || p.Who;
+    p.noStarter = false;
     this.#keep(p);
   }
 
