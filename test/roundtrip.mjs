@@ -136,7 +136,8 @@ console.log('--- link status of an unlinked player ---');
 const st = await call('/v1/link/status', { Uid: A.uid });
 ok('not linked yet', st.Linked === false);
 const begin = await call('/v1/link/begin', { Uid: A.uid });
-ok('link url issued', begin.Url.startsWith('https://discord.com/api/oauth2/authorize'));
+// A code, not a URL: the OAuth door is gone and the PDA shows this.
+ok('a link code is issued', begin.Code.length >= 4 && begin.ExpiresInSec > 0, begin.Code);
 
 console.log('--- a wrong secret is refused ---');
 const bad = await fetch(BASE + '/v1/chat/list', {

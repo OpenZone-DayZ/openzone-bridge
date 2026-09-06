@@ -21,7 +21,6 @@ import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './hi
 import { fillMirror } from './mirror.js';
 import { DiscordSide } from './discord.js';
 import { HttpSide } from './http.js';
-import { OAuthSide } from './oauth.js';
 import { LinkCodes } from './codes.js';
 import { Roles } from './roles.js';
 import { RolesMirror } from './roles-mirror.js';
@@ -55,10 +54,8 @@ function need(name) {
 const cfg = {
   token: need('DISCORD_BOT_TOKEN'),
   clientId: need('DISCORD_CLIENT_ID'),
-  clientSecret: need('DISCORD_CLIENT_SECRET'),
   guildId: need('DISCORD_GUILD_ID'),
   parentChannelId: need('DISCORD_PARENT_CHANNEL_ID'),
-  redirectUrl: need('OAUTH_REDIRECT_URL'),
   port: Number(process.env.BRIDGE_PORT || 8787),
   secret: need('OZ_SHARED_SECRET'),
   // Under ten: see the note in http.js -- the game's request dies at 10 s.
@@ -122,8 +119,6 @@ const discord = new DiscordSide(cfg, store, (key, msg) => {
   http?.wake();
 });
 
-const oauth = new OAuthSide(cfg, store, discord);
-
 // The code table lives here and the Discord side redeems against it, so the
 // bot never owns state the HTTP side cannot see.
 const codes = new LinkCodes(store);
@@ -157,8 +152,7 @@ discord.usePersonas(personas);
 // лідерство й знімала б його з живого лідера.
 // A link is how a character first becomes somebody the bot knows: the row
 // is made on the spot (a plain stalker of the lowest rank) and, when the
-// roles mirror is on, the guild member gets the roles to match. Both doors
-// -- the /link code and the OAuth page -- end in store.link().
+// roles mirror is on, the guild member gets the roles to match.
 store.onLink = (steamId) => {
   roles.ensureMember(steamId);
   rolesMirror.projectMember(discord.guild, steamId, 'first link').catch((e) => {
@@ -974,11 +968,15 @@ const routes = {
 
   // A short code, not a URL. The player reads it off the PDA screen and runs
   // /link <code> in Discord; the bot knows who they are from the interaction.
-  // Url is still returned for anyone running the old OAuth flow, but the game
-  // shows the code.
+  //
+  // The OAuth door that used to stand beside this one is gone: the game never
+  // read the Url this returned (OZ_LinkGrant has two fields, Code and
+  // ExpiresInSec), so the whole flow was unreachable from the PDA -- while
+  // its callback, an unauthenticated GET, would re-link a SteamID that was
+  // already taken, which the code path refuses.
   '/v1/link/begin': async ({ Json }) => {
     const c = codes.mint(Json.Uid);
-    return { Code: c.code, ExpiresInSec: c.expiresInSec, Url: oauth.begin(Json.Uid) };
+    return { Code: c.code, ExpiresInSec: c.expiresInSec };
   },
 
   // DiscordId comes back too. The game stores it as the fact of the link --
@@ -1469,11 +1467,7 @@ function rolesFor(uid) {
   return { ...view, DName: member?.displayName || link?.discordName || '' };
 }
 
-http = new HttpSide(cfg, {
-  routes,
-  drain,
-  oauthCallback: (req, res) => oauth.callback(req, res),
-});
+http = new HttpSide(cfg, { routes, drain });
 
 // The bot command is a wipe started OUTSIDE the game, so the game has to be
 // told: it freezes the character's record and seals his devices on the push.

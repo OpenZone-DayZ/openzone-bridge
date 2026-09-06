@@ -20,7 +20,9 @@ The bridge closes that gap:
 
 ## What it does
 
-- Links a player's SteamID to their Discord account through OAuth2.
+- Links a player's SteamID to their Discord account: the PDA shows a six-character
+  code, the player runs `/link <code>` in the guild, and the bot knows who they are
+  from the interaction. No browser, no OAuth round trip, nothing to register.
 - Keeps every private conversation and group chat as a **private Discord thread**,
   visible only to its participants. Threads, not channels: a guild is capped at 500
   channels, which a server with active players would exhaust, while archived threads

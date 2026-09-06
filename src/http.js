@@ -50,10 +50,6 @@ export class HttpSide {
   }
 
   async #route(req, res) {
-    if (req.method === 'GET' && req.url.startsWith('/oauth/callback')) {
-      return this.handlers.oauthCallback(req, res);
-    }
-
     // Reachability check, and nothing else: no secret, no state, no answer
     // that says anything about the guild. Setting a bridge up means proving
     // the game can reach it before wondering why chat is empty.

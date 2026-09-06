@@ -703,8 +703,7 @@ export class DiscordSide {
       console.log(`[discord] linked ${r.steamId} to ${i.user.tag}`);
 
       // The row for a fresh stalker -- and, with the roles mirror on, the
-      // starting roles in the guild -- are made by store.onLink(): one hook
-      // for both doors, this command and the OAuth page.
+      // starting roles in the guild -- are made by store.onLink().
       return;
     }
 

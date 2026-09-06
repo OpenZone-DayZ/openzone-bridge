@@ -361,8 +361,7 @@ export class Store {
 
   link(steamId, discordId, discordName) {
     this.q.linkSet.run(steamId, discordId, discordName || '', new Date().toISOString());
-    // One hook for both doors (the /link code and the OAuth page): the roles
-    // home makes the character's row here. Set from index.js.
+    // The roles home makes the character's row here. Set from index.js.
     if (this.onLink) this.onLink(steamId, discordId);
   }
 

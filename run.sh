@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the OpenZone bridge on Linux (or anywhere with bash and Node 20+).
+# Start the OpenZone bridge on Linux (or anywhere with bash and Node 24+).
 #
 #   ./run.sh          start once, exit when the bridge exits
 #   ./run.sh --loop   restart on crash, 5 s pause between attempts

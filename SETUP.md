@@ -92,36 +92,18 @@ every role it will manage. Discord refuses to grant or revoke a role that sits
 higher than the actor's highest role — and it refuses *silently*, with no error
 anywhere. If faction roles never appear, this is why.
 
-## 4. Register the redirect URL
-
-**OAuth2** tab → *Redirects* → add:
-
-```
-http://localhost:8787/oauth/callback
-```
-
-It has to match what the bridge sends character for character — scheme, host,
-port, path, trailing slash. A mismatch gives `invalid_redirect_uri`.
-
-Discord permits plain `http` for `localhost` specifically; it is the one
-exception to its https rule, and it is what makes a local test bridge possible
-without a domain or a certificate.
-
-Copy the **Client Secret** from this tab. It IS secret.
-
-## 5. Get the guild id
+## 4. Get the guild id
 
 In Discord: **User Settings → Advanced → Developer Mode** ON. Then right-click
 the server icon → **Copy Server ID**. Not secret.
 
-## 6. Fill in `.env`
+## 5. Fill in `.env`
 
 ```bash
 cp .env.example .env
 ```
 
-Paste in: `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
-`DISCORD_GUILD_ID`.
+Paste in: `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_GUILD_ID`.
 
 Generate the shared secret and paste it in both places:
 
@@ -149,7 +131,7 @@ to.
 
 ---
 
-## 7. Where the bridge keeps its memory
+## 6. Where the bridge keeps its memory
 
 One SQLite file, `state/bridge.sqlite` by default (`BRIDGE_DB` in `.env`). It holds every
 account link and every conversation key: lose it and no message is lost, but every
