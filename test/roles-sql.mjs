@@ -111,6 +111,10 @@ console.log('bootstrap');
   const roles2 = new Roles(store2);
   const jsonPath = join(tmpdir(), `oz-roles-${process.pid}.json`);
   const raw = structuredClone(DEFAULTS);
+  // The FILE has a version; the defaults object does not (nothing ever read
+  // DEFAULTS.Version, so it is gone). bootstrap takes the file only when it
+  // looks like one.
+  raw.Version = 1;
   raw.Stamp = 41;
   raw.Factions[1].RoleId = '900';
   raw.Factions[1].Label = 'Долг (renamed)';

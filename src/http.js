@@ -19,6 +19,8 @@
 // because wake() releases the held poll immediately.
 
 import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { timingSafeEqual } from 'node:crypto';
 
 const MAX_BODY = 1 << 20; // 1 MiB: a chat batch is never near this
 
@@ -27,16 +29,21 @@ export class HttpSide {
     this.cfg = cfg;
     this.handlers = handlers;
     this.waiters = [];
+    this.secret = Buffer.from(String(cfg.secret || ''), 'utf8');
     this.server = createServer((req, res) => this.#route(req, res));
   }
 
-  listen() {
-    return new Promise((resolve) => {
-      this.server.listen(this.cfg.port, () => {
-        console.log(`[http] listening on ${this.cfg.port}`);
-        resolve();
-      });
-    });
+  // LOOPBACK UNLESS TOLD OTHERWISE (BRIDGE_HOST).
+  //
+  // This listened on every interface while the documentation described the
+  // bridge as something the DayZ server alone talks to, over a secret in the
+  // body and no TLS. On a host with a public address that is the whole chat
+  // of every player, offered to the internet, one guessed string away.
+  async listen() {
+    const host = this.cfg.host || '127.0.0.1';
+    this.server.listen(this.cfg.port, host);
+    await once(this.server, 'listening');
+    console.log(`[http] listening on ${host}:${this.cfg.port}`);
   }
 
   // Something happened in Discord: release every held poll at once.
@@ -68,8 +75,9 @@ export class HttpSide {
       return this.#json(res, 400, { error: err.message });
     }
 
-    // The secret is checked before anything else looks at the payload.
-    if (!body || body.Secret !== this.cfg.secret) {
+    // The secret is checked before anything else looks at the payload, and
+    // the comparison does not stop at the first wrong character.
+    if (!body || !this.#secretOk(body.Secret)) {
       // Deliberately vague: a precise answer helps whoever is guessing.
       return this.#json(res, 403, { error: 'refused' });
     }
@@ -121,28 +129,30 @@ export class HttpSide {
     return this.#json(res, 200, this.handlers.drain(body));
   }
 
-  #read(req) {
-    return new Promise((resolve, reject) => {
-      let size = 0;
-      const chunks = [];
-      req.on('data', (c) => {
-        size += c.length;
-        if (size > MAX_BODY) {
-          req.destroy();
-          reject(new Error('body too large'));
-          return;
-        }
-        chunks.push(c);
-      });
-      req.on('end', () => {
-        try {
-          resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
-        } catch {
-          reject(new Error('body is not json'));
-        }
-      });
-      req.on('error', reject);
-    });
+  #secretOk(given) {
+    const got = Buffer.from(String(given ?? ''), 'utf8');
+    // Length is public either way -- timingSafeEqual refuses unequal buffers
+    // -- and the comparison of equal-length ones takes the same time whatever
+    // the bytes are.
+    return got.length === this.secret.length && timingSafeEqual(got, this.secret);
+  }
+
+  async #read(req) {
+    let size = 0;
+    const chunks = [];
+    for await (const c of req) {
+      size += c.length;
+      if (size > MAX_BODY) {
+        req.destroy();
+        throw new Error('body too large');
+      }
+      chunks.push(c);
+    }
+    try {
+      return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+    } catch {
+      throw new Error('body is not json');
+    }
   }
 
   #json(res, code, obj) {

@@ -57,6 +57,9 @@ const cfg = {
   guildId: need('DISCORD_GUILD_ID'),
   parentChannelId: need('DISCORD_PARENT_CHANNEL_ID'),
   port: Number(process.env.BRIDGE_PORT || 8787),
+  // Loopback by default: the DayZ server is the only party that talks here
+  // and the secret rides in a plain-http body. 0.0.0.0 behind a terminator.
+  host: process.env.BRIDGE_HOST || '127.0.0.1',
   secret: need('OZ_SHARED_SECRET'),
   // Under ten: see the note in http.js -- the game's request dies at 10 s.
   holdSeconds: Number(process.env.POLL_HOLD_SECONDS || 8),

@@ -139,7 +139,8 @@ const SCHEMA = [
      rank       TEXT NOT NULL DEFAULT '',
      posts      TEXT NOT NULL DEFAULT '[]',
      traits     TEXT NOT NULL DEFAULT '[]',
-     updated_at TEXT NOT NULL DEFAULT ''
+     updated_at TEXT NOT NULL DEFAULT '',
+     joined_at  TEXT NOT NULL DEFAULT ''
    )`,
   `CREATE INDEX IF NOT EXISTS members_org ON members(org)`,
   // Factions removed from the catalog. The game's roster merge adds and
@@ -207,6 +208,16 @@ export class Store {
       }
     }
     this.db.exec('CREATE INDEX IF NOT EXISTS convos_thread ON convos(thread_id)');
+
+    // WHEN HE JOINED, which is not the same as when his row was last
+    // touched. Succession promised "the longest-standing member" and read
+    // updated_at, which any change to a trait or a rank rewrites. Rows from
+    // before the column keep an empty stamp and sort as the oldest, which is
+    // exactly what they are.
+    const mcols = this.db.prepare('PRAGMA table_info(members)').all().map((c) => c.name);
+    if (!mcols.includes('joined_at')) {
+      this.db.exec("ALTER TABLE members ADD COLUMN joined_at TEXT NOT NULL DEFAULT ''");
+    }
   }
 
   #prepare() {
@@ -310,11 +321,11 @@ export class Store {
       traitSet: q('INSERT INTO traits(slug, label, role_id, missing) VALUES (?, ?, ?, ?) ' +
                   'ON CONFLICT(slug) DO UPDATE SET label = excluded.label, role_id = excluded.role_id, missing = excluded.missing'),
 
-      memGet: q('SELECT steam_id, org, frank, rank, posts, traits, updated_at FROM members WHERE steam_id = ?'),
-      memSet: q('INSERT INTO members(steam_id, org, frank, rank, posts, traits, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
-                'ON CONFLICT(steam_id) DO UPDATE SET org = excluded.org, frank = excluded.frank, rank = excluded.rank, posts = excluded.posts, traits = excluded.traits, updated_at = excluded.updated_at'),
-      memAll: q('SELECT steam_id, org, frank, rank, posts, traits, updated_at FROM members ORDER BY steam_id'),
-      memOfOrg: q('SELECT steam_id, org, frank, rank, posts, traits, updated_at FROM members WHERE org = ? ORDER BY updated_at, steam_id'),
+      memGet: q('SELECT steam_id, org, frank, rank, posts, traits, updated_at, joined_at FROM members WHERE steam_id = ?'),
+      memSet: q('INSERT INTO members(steam_id, org, frank, rank, posts, traits, updated_at, joined_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ' +
+                'ON CONFLICT(steam_id) DO UPDATE SET org = excluded.org, frank = excluded.frank, rank = excluded.rank, posts = excluded.posts, traits = excluded.traits, updated_at = excluded.updated_at, joined_at = excluded.joined_at'),
+      memAll: q('SELECT steam_id, org, frank, rank, posts, traits, updated_at, joined_at FROM members ORDER BY steam_id'),
+      memOfOrg: q('SELECT steam_id, org, frank, rank, posts, traits, updated_at, joined_at FROM members WHERE org = ? ORDER BY joined_at, steam_id'),
       memCountOrg: q('SELECT COUNT(*) AS n FROM members WHERE org = ?'),
       memCount: q('SELECT COUNT(*) AS n FROM members'),
 
@@ -474,6 +485,7 @@ export class Store {
       JSON.stringify(Array.isArray(m.posts) ? m.posts : []),
       JSON.stringify(Array.isArray(m.traits) ? m.traits : []),
       new Date().toISOString(),
+      String(m.joinedAt || ''),
     );
   }
 
@@ -899,5 +911,5 @@ function rowMember(r) {
   let traits = [];
   try { posts = JSON.parse(r.posts || '[]'); } catch { posts = []; }
   try { traits = JSON.parse(r.traits || '[]'); } catch { traits = []; }
-  return { steamId: r.steam_id, org: r.org, frank: r.frank, rank: r.rank, posts, traits, updatedAt: r.updated_at };
+  return { steamId: r.steam_id, org: r.org, frank: r.frank, rank: r.rank, posts, traits, updatedAt: r.updated_at, joinedAt: r.joined_at || '' };
 }

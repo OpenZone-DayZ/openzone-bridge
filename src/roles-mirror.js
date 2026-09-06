@@ -45,10 +45,22 @@ export class RolesMirror {
 
   // Every role id the catalog owns. Only these are ever taken off a member;
   // whatever else he wears in the guild is none of the mirror's business.
+  //
+  // MEMOISED ON THE CATALOG'S REVISION. This walked the whole catalog and
+  // built a fresh Set for every member of the ten-minute sweep and for every
+  // guildMemberUpdate the guild produces -- which is every nickname, role,
+  // avatar and timeout change anybody makes, whether the bot knows the
+  // member or not. The revision moves on every catalog write, role ids
+  // included, so the memo cannot go stale.
   managedRoleIds() {
-    const ids = new Set();
-    for (const e of this.roles.entries()) if (e.roleId) ids.add(e.roleId);
-    return ids;
+    const rev = this.roles.revision();
+    if (this.managedAt !== rev) {
+      const ids = new Set();
+      for (const e of this.roles.entries()) if (e.roleId) ids.add(e.roleId);
+      this.managed = ids;
+      this.managedAt = rev;
+    }
+    return this.managed;
   }
 
   // The roles one character should wear, from his row: the base identity,
@@ -103,6 +115,11 @@ export class RolesMirror {
       // The cache will have to do.
     }
 
+    // Every role id the catalog already owns, kept current as entries are
+    // adopted or created below. A copy: the memo behind managedRoleIds is
+    // not ours to grow.
+    const owned = new Set(this.managedRoleIds());
+
     for (const e of [...this.roles.entries()]) {
       if (e.roleId) {
         const known = guild.roles.cache.get(e.roleId);
@@ -126,14 +143,27 @@ export class RolesMirror {
         this.log.log(`[roles] the role for ${e.slug} was deleted in Discord - recreating it`);
       }
 
+      // ADOPTION MAY NOT STEAL A ROLE ANOTHER ENTRY ALREADY OWNS.
+      //
+      // Two catalog entries can wear the same label -- a rename is enough --
+      // and this then handed the roleId of the entry that has one to the
+      // entry that has none. Both pointed at one Discord role, and removing
+      // either deleted the role the other needed.
       const byName = guild.roles.cache.filter((r) => r.name === e.label);
-      if (!e.roleId && byName.size === 1) {
-        this.roles.setRoleId(e.slug, byName.first().id);
+      const free = byName.filter((r) => !owned.has(r.id));
+      if (!e.roleId && free.size === 1) {
+        const id = free.first().id;
+        this.roles.setRoleId(e.slug, id);
+        owned.add(id);
         adopted.push(e.slug);
         continue;
       }
-      if (!e.roleId && byName.size > 1) {
-        ambiguous.push(e.slug + ' (' + byName.size + ' roles named "' + e.label + '")');
+      if (!e.roleId && free.size > 1) {
+        ambiguous.push(e.slug + ' (' + free.size + ' roles named "' + e.label + '")');
+        continue;
+      }
+      if (!e.roleId && byName.size > 0) {
+        ambiguous.push(e.slug + ' ("' + e.label + '" is already another entry\'s role)');
         continue;
       }
 
@@ -149,6 +179,7 @@ export class RolesMirror {
           reason: 'OpenZone role roster',
         });
         this.roles.setRoleId(e.slug, role.id);
+        owned.add(role.id);
         made.push(e.slug);
       } catch (err) {
         this.roles.setRoleId(e.slug, '', true);
@@ -263,21 +294,29 @@ export class RolesMirror {
   // Every known, linked member back to his row. The ten-minute sweep, and
   // the second half of turning the mirror on.
   async reconcileAll(guild, reason = 'sweep', force = false) {
-    if (!force && !this.on()) return { skipped: true, checked: 0, fixed: 0, failed: 0 };
-    if (!guild) return { skipped: true, checked: 0, fixed: 0, failed: 0 };
+    const nothing = { skipped: true, checked: 0, fixed: 0, failed: 0, unlinked: 0 };
+    if (!force && !this.on()) return nothing;
+    if (!guild) return nothing;
+
+    // One query for the link table instead of one per member row.
+    const linked = new Set(this.store.linksAll().map((l) => l.steamId));
 
     let checked = 0;
     let fixed = 0;
     let failed = 0;
+    let unlinked = 0;
     for (const m of this.roles.membersAll()) {
-      if (!this.store.linkOf(m.steamId)) continue;
+      if (!linked.has(m.steamId)) {
+        unlinked++;
+        continue;
+      }
       checked++;
       const r = await this.projectMember(guild, m.steamId, 'the roles mirror follows the bot database (' + reason + ')', force);
       if (r === 'set') fixed++;
       if (r === 'failed') failed++;
     }
     if (fixed || failed) this.log.log(`[roles] ${reason}: ${checked} member(s) checked, ${fixed} put back, ${failed} failed`);
-    return { skipped: false, checked, fixed, failed };
+    return { skipped: false, checked, fixed, failed, unlinked };
   }
 
   // The mirror was just found ON (a server said so, or the bot restarted
@@ -316,15 +355,12 @@ export class RolesMirror {
       return { ok: false, why: s.failed[0], pushed: 0, skipped: 0, failed: s.failed.length, note: '' };
     }
 
-    let pushed = 0;
-    let skipped = 0;
-    let failed = 0;
-    for (const m of this.roles.membersAll()) {
-      const r = await this.projectMember(guild, m.steamId, 'the roles mirror was turned on', true);
-      if (r === 'set') pushed++;
-      else if (r === 'failed') failed++;
-      else skipped++;
-    }
+    // The same walk reconcileAll does, forced -- it used to be written out
+    // again here with its own counters.
+    const m = await this.reconcileAll(guild, 'the roles mirror was turned on', true);
+    const pushed = m.fixed;
+    const failed = m.failed;
+    const skipped = (m.checked - m.fixed - m.failed) + m.unlinked;
 
     const bits = [];
     if (s.made.length) bits.push(s.made.length + ' role(s) created');

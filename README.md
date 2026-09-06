@@ -84,6 +84,11 @@ The DayZ server is the only party that talks to the bridge. The shared secret tr
 in the request body, because DayZ cannot set an `Authorization` header, so the endpoint
 **must** be HTTPS. Game clients never see it.
 
+The listener binds **loopback only** unless `BRIDGE_HOST` says otherwise: a bridge on
+the same host as the game server needs nothing else, and a bridge that answered every
+interface offered every player's private conversation to whoever guessed one string.
+Set `BRIDGE_HOST=0.0.0.0` only behind a TLS terminator.
+
 ## Status
 
 Working, and exercised against a live guild — private threads created, messages

@@ -44,8 +44,16 @@ const C = {
 // What a guild starts with. Seeded ONCE into the tables; after that the
 // tables are the truth and these are only consulted for entries that ship
 // in a later version (add-only, see bootstrap()).
+// A refusal from inside apply()'s transaction. Thrown rather than returned
+// so the rollback takes every write with it -- see the note there.
+class Refusal extends Error {
+  constructor(why) {
+    super(why);
+    this.why = why;
+  }
+}
+
 export const DEFAULTS = {
-  Version: 1,
 
   // Ordered low to high. Order is EXPLICIT and lives here -- never Discord's
   // role position, which guild admins drag around in the UI for display and
@@ -272,7 +280,19 @@ export class Roles {
 
   #bump() {
     this.store.metaSet(STAMP, String(this.stamp() + 1));
+    this.#changed();
+  }
+
+  // ANY change to the catalog, role ids included. stamp() deliberately does
+  // not move for an id -- the game never sees one -- so callers that memoise
+  // something built out of ids (the mirror's managed set) watch this instead.
+  #changed() {
     this.cache = null;
+    this.revN = (this.revN || 0) + 1;
+  }
+
+  revision() {
+    return this.revN || 0;
   }
 
   // THE BASE FACTION: the one everybody in the Zone wears. Asked by slug
@@ -353,16 +373,21 @@ export class Roles {
 
   // The mirror writes the ids it created or adopted. Not a stamp bump: the
   // game never sees role ids.
+  // One entry back into its own table. Written out twice before -- here and
+  // in rename() -- five branches each.
+  #write(kind, node) {
+    if (kind === 'rank') this.store.rankSet(node);
+    else if (kind === 'trait') this.store.traitSet(node);
+    else if (kind === 'faction') this.store.factionSet(node);
+    else if (kind === 'post') this.store.postSet(node);
+    else if (kind === 'facrank') this.store.frankSet(node);
+  }
+
   setRoleId(slug, roleId, missing = false) {
     const e = this.find(slug);
     if (!e) return false;
-    const node = { ...e.node, roleId: roleId || '', missing: !!missing };
-    if (e.kind === 'rank') this.store.rankSet(node);
-    else if (e.kind === 'trait') this.store.traitSet(node);
-    else if (e.kind === 'faction') this.store.factionSet(node);
-    else if (e.kind === 'post') this.store.postSet(node);
-    else if (e.kind === 'facrank') this.store.frankSet(node);
-    this.cache = null;
+    this.#write(e.kind, { ...e.node, roleId: roleId || '', missing: !!missing });
+    this.#changed();
     return true;
   }
 
@@ -378,7 +403,6 @@ export class Roles {
   upsertFaction({ slug, label, color, limit, hasLeader }) {
     slug = String(slug || '').trim().toLowerCase();
     if (!SLUG.test(slug)) return { ok: false, why: 'slug must be a short lowercase word' };
-    if (slug.indexOf(':') !== -1) return { ok: false, why: 'slug must be a short lowercase word' };
 
     const name = String(label || '').trim();
     if (name.length > 100) return { ok: false, why: 'Discord caps role names at 100 characters.' };
@@ -551,18 +575,13 @@ export class Roles {
     if (!e) return { ok: false, why: 'No such entry. Run /openzone roles list to see the slugs.' };
 
     const was = e.node.label;
-    const node = { ...e.node, label: trimmed };
-    if (e.kind === 'rank') this.store.rankSet(node);
-    else if (e.kind === 'trait') this.store.traitSet(node);
-    else if (e.kind === 'faction') {
-      this.store.factionSet(node);
+    this.#write(e.kind, { ...e.node, label: trimmed });
+    if (e.kind === 'faction') {
       // The same rule as upsertFaction: a leader post named after the
       // faction is renamed with it.
       const lead = e.node.posts.find((p) => p.slug === 'leader');
       if (lead && lead.label === 'Лідер: ' + was) this.store.postSet({ ...lead, label: 'Лідер: ' + trimmed });
     }
-    else if (e.kind === 'post') this.store.postSet(node);
-    else if (e.kind === 'facrank') this.store.frankSet(node);
     this.#bump();
     return { ok: true, was, now: trimmed, roleId: e.node.roleId || '' };
   }
@@ -651,152 +670,184 @@ export class Roles {
     if (!targetUid) return { ok: false, why: 'no target' };
 
     const cat = this.#catalog();
-    const no = (why) => ({ ok: false, why, touched: [] });
+    // A REFUSAL THROWS, so the transaction rolls back.
+    //
+    // ensureMember() below writes the target's row before anything is
+    // validated, and `return no(...)` left that write committed: one typo in
+    // TargetUid from the admin console minted a phantom member who then
+    // showed up in /v1/roles/roster -- while the caller was told the call
+    // changed nothing. Which is the invariant this whole method is built on.
+    const no = (why) => { throw new Refusal(why); };
 
-    return this.store.tx(() => {
-      const touched = new Set();
-      const yes = () => ({ ok: true, why: '', touched: [...touched] });
-      const t = this.ensureMember(targetUid);
-      touched.add(targetUid);
+    try {
+      return this.store.tx(() => {
+        const touched = new Set();
+        const yes = () => ({ ok: true, why: '', touched: [...touched] });
+        const t = this.ensureMember(targetUid);
+        touched.add(targetUid);
 
-      const orgOf = (row) => {
-        const f = cat.bySlug.get(row.org);
-        return f && !f.base ? f : null;
-      };
+        const orgOf = (row) => {
+          const f = cat.bySlug.get(row.org);
+          return f && !f.base ? f : null;
+        };
 
-      if (op === 'faction.set' || op === 'faction.clear') {
-        const was = orgOf(t);
+        if (op === 'faction.set' || op === 'faction.clear') {
+          const was = orgOf(t);
 
-        // ALREADY THERE -- change nothing, and say yes: the state he asked
-        // for is the state that holds. That is what makes this safe to
-        // press twice, and why a leader accepting one of his own does not
-        // strip himself of every post.
-        if (op === 'faction.set' && was && was.slug === arg) return yes();
+          // ALREADY THERE -- change nothing, and say yes: the state he asked
+          // for is the state that holds. That is what makes this safe to
+          // press twice, and why a leader accepting one of his own does not
+          // strip himself of every post.
+          if (op === 'faction.set' && was && was.slug === arg) return yes();
 
-        // "Move him to the stalkers" is the same act as clearing: the base
-        // is already everyone's.
-        let joined = null;
-        if (op === 'faction.set' && !this.isBase(arg)) {
-          joined = cat.bySlug.get(arg);
-          if (!joined) return no(`no such faction: ${arg}`);
+          // "Move him to the stalkers" is the same act as clearing: the base
+          // is already everyone's.
+          let joined = null;
+          if (op === 'faction.set' && !this.isBase(arg)) {
+            joined = cat.bySlug.get(arg);
+            if (!joined) return no(`no such faction: ${arg}`);
 
-          // THE ONLY CEILING (TZ-4 R-C3.2), counted over everybody the bot
-          // knows, offline included. `max` is what the game's own file says
-          // (MaxMembers) and is taken only when the catalog has no limit.
-          const cap = joined.limit || max || 0;
-          if (cap > 0) {
-            const now = this.store.memberCountOf(joined.slug);
-            if (now >= cap) return no(`${joined.label} is full (${now}/${cap})`);
+            // THE ONLY CEILING (TZ-4 R-C3.2), counted over everybody the bot
+            // knows, offline included. `max` is what the game's own file says
+            // (MaxMembers) and is taken only when the catalog has no limit.
+            const cap = joined.limit || max || 0;
+            if (cap > 0) {
+              const now = this.store.memberCountOf(joined.slug);
+              if (now >= cap) return no(`${joined.label} is full (${now}/${cap})`);
+            }
           }
+
+          // Leaving a faction takes its posts and its rank with it. A "Лідер
+          // Долга" badge on somebody who is no longer in Duty means nothing.
+          t.org = joined ? joined.slug : '';
+          t.frank = '';
+          t.posts = [];
+          // WHEN HE JOINED THIS ONE. Succession's last tie-break is the
+          // longest-standing member, and reading updated_at made that "the
+          // member whose row nobody has touched in a while" -- a trait or a
+          // rank was enough to move him to the back of the queue.
+          t.joinedAt = joined ? new Date().toISOString() : '';
+          this.store.memberSet(t);
+
+          // Leadership follows membership: the first member of a faction
+          // leads it, and when the leader leaves the post passes down.
+          if (joined) this.#succession(cat, joined.slug, 'the first member leads', touched);
+          if (was && (!joined || was.slug !== joined.slug)) this.#succession(cat, was.slug, 'the leader left', touched);
+          return yes();
         }
 
-        // Leaving a faction takes its posts and its rank with it. A "Лідер
-        // Долга" badge on somebody who is no longer in Duty means nothing.
-        t.org = joined ? joined.slug : '';
-        t.frank = '';
-        t.posts = [];
-        this.store.memberSet(t);
-
-        // Leadership follows membership: the first member of a faction
-        // leads it, and when the leader leaves the post passes down.
-        if (joined) this.#succession(cat, joined.slug, 'the first member leads', touched);
-        if (was && (!joined || was.slug !== joined.slug)) this.#succession(cat, was.slug, 'the leader left', touched);
-        return yes();
-      }
-
-      if (op === 'post.add' || op === 'post.remove') {
-        const e = this.find(arg);
-        if (!e || e.kind !== 'post') return no(`no such post: ${arg}`);
-        const now = orgOf(t);
-        if (!now || now.slug !== e.faction.slug) return no(`that player is not in ${e.faction.label}`);
-
-        const set = new Set(t.posts);
-        if (op === 'post.add') set.add(e.node.slug);
-        else set.delete(e.node.slug);
-        t.posts = [...set];
-        this.store.memberSet(t);
-        if (op === 'post.remove' && e.node.slug === 'leader') this.#succession(cat, now.slug, 'the leader stepped down', touched);
-        return yes();
-      }
-
-      if (op === 'trait.add' || op === 'trait.remove') {
-        const e = this.find(arg);
-        if (!e || e.kind !== 'trait') return no(`no such trait: ${arg}`);
-        const set = new Set(t.traits);
-        if (op === 'trait.add') set.add(e.node.slug);
-        else set.delete(e.node.slug);
-        t.traits = [...set];
-        this.store.memberSet(t);
-        return yes();
-      }
-
-      if (op === 'frank.set') {
-        // The FACTION rank: one per member, scoped to the faction actually
-        // held. The arg is the BARE slug -- which ladder applies is decided
-        // by the target's own faction, so a Duty leader cannot even name
-        // Freedom's ranks.
-        const now = orgOf(t);
-        if (!now) return no('that player is not in a faction');
-        if (arg && !now.ranks.some((q) => q.slug === arg)) return no(`no such rank in ${now.label}: ${arg}`);
-        t.frank = arg;
-        this.store.memberSet(t);
-        return yes();
-      }
-
-      if (op === 'leader.set') {
-        // The ADMIN names the leader outright. Different from
-        // leader.transfer on purpose: transfer is the leader's own act and
-        // requires him to hold the post; set requires nothing but a target
-        // inside a faction. leaderMay() never allows it.
-        const now = orgOf(t);
-        if (!now) return no('that player is not in a faction');
-        if (!now.posts.some((p) => p.slug === 'leader')) return no(`${now.label} has no leader post`);
-
-        // Set, singular: the post comes OFF everyone else.
-        for (const m of this.store.membersOf(now.slug)) {
-          if (m.steamId === t.steamId || !m.posts.includes('leader')) continue;
-          m.posts = m.posts.filter((p) => p !== 'leader');
-          this.store.memberSet(m);
-          touched.add(m.steamId);
-        }
-        if (!t.posts.includes('leader')) t.posts = [...t.posts, 'leader'];
-        this.store.memberSet(t);
-        return yes();
-      }
-
-      if (op === 'rank.set') {
-        if (arg) {
+        if (op === 'post.add' || op === 'post.remove') {
           const e = this.find(arg);
-          if (!e || e.kind !== 'rank') return no(`no such rank: ${arg}`);
+          if (!e || e.kind !== 'post') return no(`no such post: ${arg}`);
+          const now = orgOf(t);
+          if (!now || now.slug !== e.faction.slug) return no(`that player is not in ${e.faction.label}`);
+
+          // THE LEADER POST IS NOT AN ORDINARY POST, whichever door asks
+          // for it. A leader may not grant it (leaderMay refuses), but the
+          // admin path went straight through and minted a second one -- and
+          // succession, which assumes exactly one, then quietly did nothing
+          // for that faction ever again. Adding it takes it off everybody
+          // else, exactly like leader.set.
+          if (op === 'post.add' && e.node.slug === 'leader') {
+            for (const m of this.store.membersOf(now.slug)) {
+              if (m.steamId === t.steamId || !m.posts.includes('leader')) continue;
+              m.posts = m.posts.filter((p) => p !== 'leader');
+              this.store.memberSet(m);
+              touched.add(m.steamId);
+            }
+          }
+
+          const set = new Set(t.posts);
+          if (op === 'post.add') set.add(e.node.slug);
+          else set.delete(e.node.slug);
+          t.posts = [...set];
+          this.store.memberSet(t);
+          if (op === 'post.remove' && e.node.slug === 'leader') this.#succession(cat, now.slug, 'the leader stepped down', touched);
+          return yes();
         }
-        t.rank = arg;
-        this.store.memberSet(t);
-        return yes();
-      }
 
-      if (op === 'leader.transfer') {
-        if (!actorUid) return no('nobody to hand it over from');
-        const a = this.store.memberGet(actorUid);
-        const f = a ? orgOf(a) : null;
-        if (!f) return no('you are not in a faction');
-        if (!f.posts.some((p) => p.slug === 'leader')) return no(`${f.label} has no leader post`);
-        if (!a.posts.includes('leader')) return no('you are not the leader');
-        const theirs = orgOf(t);
-        if (!theirs || theirs.slug !== f.slug) return no(`that player is not in ${f.label}`);
-        if (actorUid === targetUid) return yes();
+        if (op === 'trait.add' || op === 'trait.remove') {
+          const e = this.find(arg);
+          if (!e || e.kind !== 'trait') return no(`no such trait: ${arg}`);
+          const set = new Set(t.traits);
+          if (op === 'trait.add') set.add(e.node.slug);
+          else set.delete(e.node.slug);
+          t.traits = [...set];
+          this.store.memberSet(t);
+          return yes();
+        }
 
-        // Given away, not shared -- and in ONE transaction, so the faction
-        // is never caught with no leader or with two.
-        if (!t.posts.includes('leader')) t.posts = [...t.posts, 'leader'];
-        this.store.memberSet(t);
-        a.posts = a.posts.filter((p) => p !== 'leader');
-        this.store.memberSet(a);
-        touched.add(actorUid);
-        return yes();
-      }
+        if (op === 'frank.set') {
+          // The FACTION rank: one per member, scoped to the faction actually
+          // held. The arg is the BARE slug -- which ladder applies is decided
+          // by the target's own faction, so a Duty leader cannot even name
+          // Freedom's ranks.
+          const now = orgOf(t);
+          if (!now) return no('that player is not in a faction');
+          if (arg && !now.ranks.some((q) => q.slug === arg)) return no(`no such rank in ${now.label}: ${arg}`);
+          t.frank = arg;
+          this.store.memberSet(t);
+          return yes();
+        }
 
-      return no(`unknown operation: ${op}`);
-    });
+        if (op === 'leader.set') {
+          // The ADMIN names the leader outright. Different from
+          // leader.transfer on purpose: transfer is the leader's own act and
+          // requires him to hold the post; set requires nothing but a target
+          // inside a faction. leaderMay() never allows it.
+          const now = orgOf(t);
+          if (!now) return no('that player is not in a faction');
+          if (!now.posts.some((p) => p.slug === 'leader')) return no(`${now.label} has no leader post`);
+
+          // Set, singular: the post comes OFF everyone else.
+          for (const m of this.store.membersOf(now.slug)) {
+            if (m.steamId === t.steamId || !m.posts.includes('leader')) continue;
+            m.posts = m.posts.filter((p) => p !== 'leader');
+            this.store.memberSet(m);
+            touched.add(m.steamId);
+          }
+          if (!t.posts.includes('leader')) t.posts = [...t.posts, 'leader'];
+          this.store.memberSet(t);
+          return yes();
+        }
+
+        if (op === 'rank.set') {
+          if (arg) {
+            const e = this.find(arg);
+            if (!e || e.kind !== 'rank') return no(`no such rank: ${arg}`);
+          }
+          t.rank = arg;
+          this.store.memberSet(t);
+          return yes();
+        }
+
+        if (op === 'leader.transfer') {
+          if (!actorUid) return no('nobody to hand it over from');
+          const a = this.store.memberGet(actorUid);
+          const f = a ? orgOf(a) : null;
+          if (!f) return no('you are not in a faction');
+          if (!f.posts.some((p) => p.slug === 'leader')) return no(`${f.label} has no leader post`);
+          if (!a.posts.includes('leader')) return no('you are not the leader');
+          const theirs = orgOf(t);
+          if (!theirs || theirs.slug !== f.slug) return no(`that player is not in ${f.label}`);
+          if (actorUid === targetUid) return yes();
+
+          // Given away, not shared -- and in ONE transaction, so the faction
+          // is never caught with no leader or with two.
+          if (!t.posts.includes('leader')) t.posts = [...t.posts, 'leader'];
+          this.store.memberSet(t);
+          a.posts = a.posts.filter((p) => p !== 'leader');
+          this.store.memberSet(a);
+          touched.add(actorUid);
+          return yes();
+        }
+
+        return no(`unknown operation: ${op}`);
+      });
+    } catch (err) {
+      if (err instanceof Refusal) return { ok: false, why: err.why, touched: [] };
+      throw err;
+    }
   }
 
   // Leadership follows membership on its own (owner's decision 2026-08-30):
@@ -805,12 +856,6 @@ export class Roles {
   // next, and to the longest-standing member when everything ties. The
   // base is exempt: a crowd has no leader. Does nothing when a leader is
   // already there, so it is safe after every membership change.
-  ensureLeadership(slug, reason) {
-    const touched = new Set();
-    this.store.tx(() => this.#succession(this.#catalog(), slug, reason, touched));
-    return [...touched];
-  }
-
   #succession(cat, slug, reason, touched) {
     const f = cat.bySlug.get(slug);
     if (!f || f.base) return;
@@ -828,7 +873,12 @@ export class Roles {
       const r = cat.ranks.find((x) => x.slug === m.rank);
       return r ? r.ord : 0;
     };
-    pool.sort((a, b) => (frankOrd(b) - frankOrd(a)) || (rankOrd(b) - rankOrd(a)));
+    // Faction rank, then stalker rank, then whoever has been in it longest.
+    // An empty joined stamp is a row from before the column: it predates
+    // every stamped one, which is what sorting it first says.
+    const since = (m) => String(m.joinedAt || '');
+    pool.sort((a, b) => (frankOrd(b) - frankOrd(a)) || (rankOrd(b) - rankOrd(a))
+      || (since(a) < since(b) ? -1 : since(a) > since(b) ? 1 : 0));
 
     const heir = pool[0];
     heir.posts = [...heir.posts, 'leader'];
