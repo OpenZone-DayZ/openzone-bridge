@@ -31,7 +31,7 @@
 // Listing live on every PDA open would cost ~32 REST calls for 30 posts
 // against the global 50/s budget shared with chat; the store pays once.
 
-import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import { ChannelType } from 'discord.js';
 import { byteClip, GAME_STR_MAX } from './clip.js';
 
 const KEEP = 50;
@@ -66,39 +66,30 @@ export class News {
     this.discord = discord;
     const guild = discord.guild;
 
-    let ch = null;
-    if (knownId) ch = await discord.client.channels.fetch(knownId).catch(() => null);
-    if (!ch) {
-      const all = await guild.channels.fetch();
-      ch = all.find((c) => c && c.type === ChannelType.GuildForum && c.name === 'новини');
-    }
-    if (!ch) {
-      ch = await guild.channels.create({
-        name: 'новини',
-        type: ChannelType.GuildForum,
-        topic: 'Новини Зони. Пости пишуть адміністратори; гра читає їх на КПК.',
-        reason: 'OpenZone news feed',
-      });
-    }
+    const ch = await discord.findOrCreateChannel({
+      knownId,
+      name: 'новини',
+      type: ChannelType.GuildForum,
+      topic: 'Новини Зони. Пости пишуть адміністратори; гра читає їх на КПК.',
+      reason: 'OpenZone news feed',
+    });
 
-    await ch.permissionOverwrites.set([
-      {
-        id: guild.roles.everyone.id,
-        deny: [PermissionFlagsBits.SendMessages, PermissionFlagsBits.SendMessagesInThreads],
-      },
-      {
-        id: discord.client.user.id,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.ReadMessageHistory,
-          PermissionFlagsBits.ManageThreads,
-          // The bot may post too: game events will author news one day,
-          // and the everyone-deny above would bind the bot without this.
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.SendMessagesInThreads,
-        ],
-      },
-    ]);
+    // The two overwrites the bot owns, edited in place. set() replaced the
+    // whole list on every start and took an admin's own overwrites with it.
+    const reason = 'OpenZone: the news forum the bot owns';
+    await ch.permissionOverwrites.edit(guild.roles.everyone.id, {
+      SendMessages: false,
+      SendMessagesInThreads: false,
+    }, { reason });
+    await ch.permissionOverwrites.edit(discord.client.user.id, {
+      ViewChannel: true,
+      ReadMessageHistory: true,
+      ManageThreads: true,
+      // The bot may post too: game events will author news one day, and the
+      // everyone-deny above would bind the bot without this.
+      SendMessages: true,
+      SendMessagesInThreads: true,
+    }, { reason });
 
     this.channelId = ch.id;
     await this.#warm(ch);

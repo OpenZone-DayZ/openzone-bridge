@@ -1093,48 +1093,68 @@ export class DiscordSide {
   // Old threads stay where they were born: a thread cannot move, and the
   // webhook is resolved by the thread's PARENT, so both eras keep working.
 
+  // FETCH THE RECORDED ID, ELSE FIND BY NAME, ELSE CREATE.
+  //
+  // Written out four times over, with four different ideas of what a failure
+  // means. One place now, and one discipline: only 10003/10004 says the
+  // recorded channel is gone. Every other failure throws, because "Discord
+  // did not answer" must never turn into a second channel built beside the
+  // one that is already there.
+  async findOrCreateChannel({ knownId, name, type, topic, parent, reason }) {
+    if (knownId) {
+      try {
+        const ch = await this.client.channels.fetch(knownId);
+        // A recorded id of the wrong shape (the zone's first cut was a
+        // thread) is not this channel; the search below finds the real one.
+        if (ch && ch.type === type) return ch;
+      } catch (e) {
+        if (!(e && (e.code === 10003 || e.code === 10004))) {
+          throw new Error(`cannot see the recorded #${name} (${e.message})`);
+        }
+      }
+    }
+
+    // FETCH, do not read the cache: guild.channels.cache starts empty and an
+    // empty cache reads as "no such channel", which means a duplicate.
+    const all = await this.guild.channels.fetch();
+    const found = all.find((c) => c && c.type === type && c.name === name);
+    if (found) return found;
+
+    return this.guild.channels.create({ name, type, topic, parent, reason });
+  }
+
   async ensureTypedChannel(name, topic, knownId) {
-    let ch = null;
-    if (knownId) ch = await this.client.channels.fetch(knownId).catch(() => null);
+    const ch = await this.findOrCreateChannel({
+      knownId,
+      name,
+      type: ChannelType.GuildText,
+      topic,
+      parent: this.parent.parentId ?? undefined,
+      reason: 'OpenZone typed thread home',
+    });
 
-    if (!ch) {
-      const all = await this.guild.channels.fetch();
-      ch = all.find((c) => c && c.type === ChannelType.GuildText && c.name === name);
-    }
-
-    if (!ch) {
-      ch = await this.guild.channels.create({
-        name,
-        type: ChannelType.GuildText,
-        topic,
-        parent: this.parent.parentId ?? undefined,
-        reason: 'OpenZone typed thread home',
-      });
-    }
-
-    await ch.permissionOverwrites.set([
-      {
-        id: this.guild.roles.everyone.id,
-        deny: [
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.CreatePublicThreads,
-          PermissionFlagsBits.CreatePrivateThreads,
-        ],
-        allow: [PermissionFlagsBits.SendMessagesInThreads],
-      },
-      {
-        id: this.client.user.id,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.SendMessagesInThreads,
-          PermissionFlagsBits.CreatePrivateThreads,
-          PermissionFlagsBits.CreatePublicThreads,
-          PermissionFlagsBits.ManageThreads,
-          PermissionFlagsBits.ManageWebhooks,
-        ],
-      },
-    ]);
+    // EDIT THE TWO WE OWN, NEVER SET THE WHOLE LIST.
+    //
+    // permissionOverwrites.set() REPLACES every overwrite on the channel, and
+    // this runs on every start: a moderator's own overwrite -- and the bot's
+    // own self-granted Manage Messages from the mark sweep -- was wiped on
+    // the next restart, silently, for as long as this stood here.
+    const reason = 'OpenZone: the channel the bot owns';
+    await ch.permissionOverwrites.edit(this.guild.roles.everyone.id, {
+      SendMessages: false,
+      CreatePublicThreads: false,
+      CreatePrivateThreads: false,
+      SendMessagesInThreads: true,
+    }, { reason });
+    await ch.permissionOverwrites.edit(this.client.user.id, {
+      ViewChannel: true,
+      SendMessages: true,
+      SendMessagesInThreads: true,
+      CreatePrivateThreads: true,
+      CreatePublicThreads: true,
+      ManageThreads: true,
+      ManageWebhooks: true,
+    }, { reason });
 
     this.hookByChannel ??= new Map();
     if (!this.hookByChannel.has(ch.id)) {
@@ -1167,40 +1187,37 @@ export class DiscordSide {
   // Discord alike. It carries its own webhook -- a webhook belongs to a
   // channel, and the chat parent's one cannot post outside its threads.
   async ensureZoneChannel(knownId) {
-    let ch = null;
-    if (knownId) {
-      ch = await this.client.channels.fetch(knownId).catch(() => null);
-      // The first cut of the zone was a THREAD, and its id may still be on
-      // file. A thread cannot carry a webhook and is not a town square:
-      // only a real text channel qualifies. Anything else falls through to
-      // the search below, and index.js then deletes the stray thread and
-      // stores the channel id in its place. Measured live: the stored id
-      // resolved to thread #Зона and every zone line posted plainly into it.
-      if (ch && ch.type !== ChannelType.GuildText) ch = null;
-    }
-
-    if (!ch) {
-      const all = await this.guild.channels.fetch();
-      ch = all.find((c) => c && c.type === ChannelType.GuildText && c.name === 'зона');
-    }
-
-    if (!ch) {
-      ch = await this.guild.channels.create({
-        name: 'зона',
-        type: ChannelType.GuildText,
-        topic: 'Спільний ефір Зони. Те, що сказано тут, чує кожен КПК.',
-        reason: 'OpenZone zone-wide chat',
-      });
-    }
+    // "DELETED" AND "DISCORD DID NOT ANSWER" ARE NOT THE SAME ANSWER, and
+    // findOrCreateChannel is where the difference is kept. This used to
+    // swallow every error alike; the caller then deleted whatever the id
+    // resolved to and built a new town square beside it, so one transient
+    // fetch failure plus a channel an admin had renamed was enough to
+    // destroy #зона with its whole history.
+    //
+    // The first cut of the zone was a THREAD, and its id may still be on
+    // file: a recorded id of the wrong type is not this channel, so the
+    // search by name finds the real one and index.js clears the stray.
+    // Measured live -- the stored id resolved to thread #Зона and every
+    // zone line posted plainly into it.
+    const ch = await this.findOrCreateChannel({
+      knownId,
+      name: 'зона',
+      type: ChannelType.GuildText,
+      topic: 'Спільний ефір Зони. Те, що сказано тут, чує кожен КПК.',
+      reason: 'OpenZone zone-wide chat',
+    });
 
     this.zoneChannel = ch;
     this.zoneWebhook = await this.#webhookOn(ch);
     return ch;
   }
 
+  // A THREAD, and only a thread. The one caller uses this to clear a stray
+  // first-cut zone thread; pointed at a channel by mistake it would delete a
+  // channel, which is not a mistake anybody recovers from.
   async deleteThread(threadId, reason) {
     const th = await this.client.channels.fetch(threadId).catch(() => null);
-    if (th) await th.delete(reason);
+    if (th && th.isThread?.()) await th.delete(reason);
   }
 
   // A deleted group leaves its thread standing as an archive (TZ-4 R-D4.2):

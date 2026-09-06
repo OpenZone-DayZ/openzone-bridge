@@ -1455,34 +1455,55 @@ setInterval(() => {
 const news = new News(store);
 news.onFresh = (p) => queuePush(null, { Id: p.Id, Title: p.Title, Who: p.Who, At: p.At }, 'news');
 
+// THE FURNITURE IS BUILT BEST EFFORT, AND A MISSING PIECE IS NOT A DEAD BOT.
+//
+// None of this used to be caught. A bot without Manage Channels, a guild at
+// its 500-channel cap or a Discord hiccup at the wrong second killed the
+// process at start-up -- and the game was then left with no chat, no roster
+// and no roles at all, over a channel the bridge can perfectly well run
+// without: homeOf() falls back to the parent, a conversation with no thread
+// lives in the store, and the news feed serves what it already holds.
+async function furnish(what, make) {
+  try {
+    return await make();
+  } catch (e) {
+    console.warn(`[bridge] ${what} is not available (${e.message}); running without it`);
+    return null;
+  }
+}
+
 // Typed homes for threads: direct talks and groups each get their own
 // channel; the ids live in the bridge state so a rename survives.
 {
-  const d = await discord.ensureTypedChannel(
+  const d = await furnish('the direct-conversation channel', () => discord.ensureTypedChannel(
     'пда-розмови',
     'Особисті розмови з КПК. Пишіть у своїх тредах — сам канал порожній.',
-    store.guildRef?.('directChannelId'),
-  );
+    store.guildRef('directChannelId'),
+  ));
   discord.directChannel = d;
-  store.setGuildRef?.('directChannelId', d.id);
+  if (d) store.setGuildRef('directChannelId', d.id);
 
-  const g = await discord.ensureTypedChannel(
+  const g = await furnish('the group-conversation channel', () => discord.ensureTypedChannel(
     'пда-групи',
     'Групові розмови з КПК. Пишіть у своїх тредах — сам канал порожній.',
-    store.guildRef?.('groupChannelId'),
-  );
+    store.guildRef('groupChannelId'),
+  ));
   discord.groupChannel = g;
-  store.setGuildRef?.('groupChannelId', g.id);
+  if (g) store.setGuildRef('groupChannelId', g.id);
 }
 
 // The zone exists from the first boot: one conversation for everyone,
 // members ['*'] -- the wildcard Store.memberOf understands.
 {
   const known = store.convo('zone');
-  const ch = await discord.ensureZoneChannel(known?.threadId);
-  if (!known || known.threadId !== ch.id) {
+  const ch = await furnish('the zone channel', () => discord.ensureZoneChannel(known?.threadId));
+  if (ch && (!known || known.threadId !== ch.id)) {
     // The first cut of the zone was a public thread; a stray one is
-    // deleted rather than left as a second town square.
+    // deleted rather than left as a second town square. Only a THREAD is
+    // ever deleted here (see deleteThread): ensureZoneChannel refuses to
+    // answer at all when it cannot tell "deleted" from "Discord is down",
+    // and the town square with its whole history is not something to lose
+    // over a hiccup.
     if (known?.threadId) {
       await discord.deleteThread(known.threadId, 'the zone moved to its own channel').catch(() => {});
     }
@@ -1497,7 +1518,10 @@ news.onFresh = (p) => queuePush(null, { Id: p.Id, Title: p.Title, Who: p.Who, At
 }
 
 discord.useNews(news);
-await news.start(discord, store.guildRef?.('newsChannelId')).then((ch) => store.setGuildRef?.('newsChannelId', ch.id));
+{
+  const ch = await furnish('the news forum', () => news.start(discord, store.guildRef('newsChannelId')));
+  if (ch) store.setGuildRef('newsChannelId', ch.id);
+}
 
 await http.listen();
 console.log('[bridge] ready');

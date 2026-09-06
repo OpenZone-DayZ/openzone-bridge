@@ -59,8 +59,15 @@ console.log('--- a fresh poll hands over the cursor, not the history ---');
 // with everything the store remembers for every player it named, in one
 // batch of RPCs, while it was still starting up.
 const firstPoll = await poll(0, [A.uid, B.uid], true);
+// A conversation line names its conversation; a one-shot toast (an invite
+// waiting from an earlier run) rides the same pipe with an empty Id and is
+// not history.
+const replayed = firstPoll.Items
+  .filter((i) => i.Kind === 'chat')
+  .map((i) => JSON.parse(i.Json))
+  .filter((l) => l.Id);
 ok('a fresh poll carries no chat history',
-  firstPoll.Items.every((i) => i.Kind !== 'chat'), `${firstPoll.Items.length} item(s)`);
+  replayed.length === 0, `${firstPoll.Items.length} item(s), ${replayed.length} of them history`);
 ok('and says where the stream is', Number.isInteger(firstPoll.Cursor) && firstPoll.Cursor > 0, String(firstPoll.Cursor));
 
 console.log('--- send from the game ---');
