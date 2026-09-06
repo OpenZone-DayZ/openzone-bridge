@@ -53,111 +53,125 @@ function ok(label, cond, detail = '') {
   if (!cond) process.exitCode = 1;
 }
 
-console.log('--- start a direct conversation ---');
-const started = await call('/v1/chat/start', {
-  Uid: A.uid, Name: A.name, OtherUid: B.uid, OtherName: B.name,
-});
-ok('thread created', !!started.Id, started.Id);
-const key = started.Id;
+// Declared here, not inside the try below, so the finally block can clean up
+// whatever got created even when a later step throws before the group or
+// the direct conversation exists.
+let key = '';
+let grp = null;
 
-console.log('--- both sides see it in their list ---');
-const listA = await call('/v1/chat/list', { Uid: A.uid });
-const listB = await call('/v1/chat/list', { Uid: B.uid });
-ok('A sees the conversation', listA.Items.some((i) => i.Id === key));
-ok('B sees the same one', listB.Items.some((i) => i.Id === key));
+try {
+  console.log('--- start a direct conversation ---');
+  const started = await call('/v1/chat/start', {
+    Uid: A.uid, Name: A.name, OtherUid: B.uid, OtherName: B.name,
+  });
+  ok('thread created', !!started.Id, started.Id);
+  key = started.Id;
 
-console.log('--- a fresh poll hands over the cursor, not the history ---');
-// A game server that has just booted holds no cursor. It used to be answered
-// with everything the store remembers for every player it named, in one
-// batch of RPCs, while it was still starting up.
-const firstPoll = await poll(0, [A.uid, B.uid], true);
-// A conversation line names its conversation; a one-shot toast (an invite
-// waiting from an earlier run) rides the same pipe with an empty Id and is
-// not history.
-const replayed = firstPoll.Items
-  .filter((i) => i.Kind === 'chat')
-  .map((i) => JSON.parse(i.Json))
-  .filter((l) => l.Id);
-ok('a fresh poll carries no chat history',
-  replayed.length === 0, `${firstPoll.Items.length} item(s), ${replayed.length} of them history`);
-ok('and says where the stream is', Number.isInteger(firstPoll.Cursor) && firstPoll.Cursor > 0, String(firstPoll.Cursor));
+  console.log('--- both sides see it in their list ---');
+  const listA = await call('/v1/chat/list', { Uid: A.uid });
+  const listB = await call('/v1/chat/list', { Uid: B.uid });
+  ok('A sees the conversation', listA.Items.some((i) => i.Id === key));
+  ok('B sees the same one', listB.Items.some((i) => i.Id === key));
 
-console.log('--- send from the game ---');
-// The probe text carries a per-run nonce: identical texts across runs let a
-// LATE Discord echo of the previous run claim this run's expect, and the
-// line lands unowned (measured 2026-08-30: reruns flipped Mine/name).
-const probe = `Перевірка зв'язку ${Date.now().toString(36)}. Чути?`;
-await call('/v1/chat/send', { Uid: A.uid, Name: A.name, Id: key, Text: probe });
+  console.log('--- a fresh poll hands over the cursor, not the history ---');
+  // A game server that has just booted holds no cursor. It used to be answered
+  // with everything the store remembers for every player it named, in one
+  // batch of RPCs, while it was still starting up.
+  const firstPoll = await poll(0, [A.uid, B.uid], true);
+  // A conversation line names its conversation; a one-shot toast (an invite
+  // waiting from an earlier run) rides the same pipe with an empty Id and is
+  // not history.
+  const replayed = firstPoll.Items
+    .filter((i) => i.Kind === 'chat')
+    .map((i) => JSON.parse(i.Json))
+    .filter((l) => l.Id);
+  ok('a fresh poll carries no chat history',
+    replayed.length === 0, `${firstPoll.Items.length} item(s), ${replayed.length} of them history`);
+  ok('and says where the stream is', Number.isInteger(firstPoll.Cursor) && firstPoll.Cursor > 0, String(firstPoll.Cursor));
 
-console.log('--- poll: the message arrives only once Discord has it ---');
-const t0 = Date.now();
-const batch = await poll(firstPoll.Cursor, [A.uid, B.uid]);
-const held = Date.now() - t0;
+  console.log('--- send from the game ---');
+  // The probe text carries a per-run nonce: identical texts across runs let a
+  // LATE Discord echo of the previous run claim this run's expect, and the
+  // line lands unowned (measured 2026-08-30: reruns flipped Mine/name).
+  const probe = `Перевірка зв'язку ${Date.now().toString(36)}. Чути?`;
+  await call('/v1/chat/send', { Uid: A.uid, Name: A.name, Id: key, Text: probe });
 
-// CHAT lines only: a fresh server id is also handed the roster and the role
-// projections in the same batch, and those carry no Uid (measured 2026-09-03:
-// a bridge restart before the run put four roster parts in the batch and the
-// "both members" set counted an undefined third member).
-const lines = batch.Items.filter((i) => i.Kind === 'chat').map((i) => JSON.parse(i.Json));
-ok('poll returned the message', lines.some((l) => l.Text.includes(probe)), `${held} ms, ${batch.Items.length} item(s)`);
-ok('it is addressed to both members', new Set(lines.map((l) => l.Uid)).size === 2);
+  console.log('--- poll: the message arrives only once Discord has it ---');
+  const t0 = Date.now();
+  const batch = await poll(firstPoll.Cursor, [A.uid, B.uid]);
+  const held = Date.now() - t0;
 
-// Other conversations may have moved while this ran, so pick OUR line rather
-// than merely the first one addressed to A.
-const mineForA = lines.find((l) => l.Uid === A.uid && l.Text.includes(probe));
-ok('A sees it as their own', mineForA?.Mine === true);
-ok('the speaker kept their name', mineForA?.Who === A.name, mineForA?.Who);
+  // CHAT lines only: a fresh server id is also handed the roster and the role
+  // projections in the same batch, and those carry no Uid (measured 2026-09-03:
+  // a bridge restart before the run put four roster parts in the batch and the
+  // "both members" set counted an undefined third member).
+  const lines = batch.Items.filter((i) => i.Kind === 'chat').map((i) => JSON.parse(i.Json));
+  ok('poll returned the message', lines.some((l) => l.Text.includes(probe)), `${held} ms, ${batch.Items.length} item(s)`);
+  ok('it is addressed to both members', new Set(lines.map((l) => l.Uid)).size === 2);
 
-console.log('--- read the thread back ---');
-const open = await call('/v1/chat/open', { Uid: B.uid, Id: key, Limit: 20 });
-ok('B can open it', open.Id === key, open.Title);
-ok('the line is in the history', open.Lines.some((l) => l.Text.includes(probe)));
-ok('and is NOT B own', open.Lines.at(-1)?.Mine === false);
+  // Other conversations may have moved while this ran, so pick OUR line rather
+  // than merely the first one addressed to A.
+  const mineForA = lines.find((l) => l.Uid === A.uid && l.Text.includes(probe));
+  ok('A sees it as their own', mineForA?.Mine === true);
+  ok('the speaker kept their name', mineForA?.Who === A.name, mineForA?.Who);
 
-console.log('--- a stranger cannot open it ---');
-const stranger = await call('/v1/chat/open', { Uid: '76561100000000009', Id: key, Limit: 5 });
-ok('refused', !!stranger.Error, stranger.Error);
+  console.log('--- read the thread back ---');
+  const open = await call('/v1/chat/open', { Uid: B.uid, Id: key, Limit: 20 });
+  ok('B can open it', open.Id === key, open.Title);
+  ok('the line is in the history', open.Lines.some((l) => l.Text.includes(probe)));
+  ok('and is NOT B own', open.Lines.at(-1)?.Mine === false);
 
-console.log('--- group ---');
-const grp = await call('/v1/chat/group_new', { Uid: A.uid, Title: 'Звалище' });
-ok('group created', !!grp.Id, grp.Id);
-const add = await call('/v1/chat/group_add', { Uid: A.uid, Id: grp.Id, OtherUid: B.uid });
-ok('B invited', add.ok === true);
-// Nobody lands in a group unasked: the add only files an invite, so the
-// group stays closed to B until B accepts it himself.
-const early = await call('/v1/chat/open', { Uid: B.uid, Id: grp.Id });
-ok('B cannot open before accepting', early.Error === 'no_chat');
-const accept = await call('/v1/chat/invite_accept', { Uid: B.uid, Id: grp.Id });
-ok('B accepted the invite', accept.ok === true);
-const grpOpen = await call('/v1/chat/open', { Uid: B.uid, Id: grp.Id });
-ok('B can open the group', grpOpen.Id === grp.Id, grpOpen.Title);
+  console.log('--- a stranger cannot open it ---');
+  const stranger = await call('/v1/chat/open', { Uid: '76561100000000009', Id: key, Limit: 5 });
+  ok('refused', !!stranger.Error, stranger.Error);
 
-console.log('--- link status of an unlinked player ---');
-const st = await call('/v1/link/status', { Uid: A.uid });
-ok('not linked yet', st.Linked === false);
-const begin = await call('/v1/link/begin', { Uid: A.uid });
-// A code, not a URL: the OAuth door is gone and the PDA shows this.
-ok('a link code is issued', begin.Code.length >= 4 && begin.ExpiresInSec > 0, begin.Code);
+  console.log('--- group ---');
+  grp = await call('/v1/chat/group_new', { Uid: A.uid, Title: 'Звалище' });
+  ok('group created', !!grp.Id, grp.Id);
+  const add = await call('/v1/chat/group_add', { Uid: A.uid, Id: grp.Id, OtherUid: B.uid });
+  ok('B invited', add.ok === true);
+  // Nobody lands in a group unasked: the add only files an invite, so the
+  // group stays closed to B until B accepts it himself.
+  const early = await call('/v1/chat/open', { Uid: B.uid, Id: grp.Id });
+  ok('B cannot open before accepting', early.Error === 'no_chat');
+  const accept = await call('/v1/chat/invite_accept', { Uid: B.uid, Id: grp.Id });
+  ok('B accepted the invite', accept.ok === true);
+  const grpOpen = await call('/v1/chat/open', { Uid: B.uid, Id: grp.Id });
+  ok('B can open the group', grpOpen.Id === grp.Id, grpOpen.Title);
 
-console.log('--- a wrong secret is refused ---');
-const bad = await fetch(BASE + '/v1/chat/list', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ Secret: 'nope', ServerId: SERVER, Json: { Uid: A.uid } }),
-});
-ok('403', bad.status === 403);
+  console.log('--- link status of an unlinked player ---');
+  const st = await call('/v1/link/status', { Uid: A.uid });
+  ok('not linked yet', st.Linked === false);
+  const begin = await call('/v1/link/begin', { Uid: A.uid });
+  // A code, not a URL: the OAuth door is gone and the PDA shows this.
+  ok('a link code is issued', begin.Code.length >= 4 && begin.ExpiresInSec > 0, begin.Code);
 
-console.log('--- and the base is left as it was found ---');
-{
+  console.log('--- a wrong secret is refused ---');
+  const bad = await fetch(BASE + '/v1/chat/list', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ Secret: 'nope', ServerId: SERVER, Json: { Uid: A.uid } }),
+  });
+  ok('403', bad.status === 403);
+} finally {
+  // MUST run whether the block above finished clean or threw partway
+  // through: a failed run used to abort before this point and leave the
+  // direct conversation, the group, the invite and the `names` rows in the
+  // live base -- the same leak the commit that added this teardown set out
+  // to close, just narrowed from "every run" to "every failed run".
+  console.log('--- and the base is left as it was found ---');
   // The same file the bridge is serving from, opened a second time: WAL
   // makes that safe, and the bridge holds no conversation in memory.
   const store = new Store(process.env.BRIDGE_DB || './state/bridge.sqlite');
+  // Only what actually got made: a run that threw before the group was
+  // created must not fail this assertion over a group that never existed.
+  const made = [key, grp?.Id].filter(Boolean);
   let gone = 0;
-  for (const k of [key, grp.Id]) if (store.dropConvo(k)) gone++;
+  for (const k of made) if (store.dropConvo(k)) gone++;
   for (const uid of [A.uid, B.uid]) store.forgetName(uid);
   const left = store.convosAll().filter((c) => c.members?.some((m) => m === A.uid || m === B.uid));
   store.close();
-  ok('the conversations this run made are gone', gone === 2, `${gone} dropped`);
+  ok('the conversations this run made are gone', gone === made.length, `${gone}/${made.length} dropped`);
   ok('and nothing of its characters is left behind', left.length === 0, `${left.length} left`);
 }
 

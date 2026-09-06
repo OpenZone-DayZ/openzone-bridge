@@ -217,6 +217,14 @@ async function startConversation(key, kind, title, members, serverId) {
 async function bindThread(key, serverId) {
   const c = store.convo(key);
   if (!c || !mirrored(serverId, 'chat')) return null;
+  // The zone is a CHANNEL, built by ensureZoneChannel at boot, never a
+  // thread minted here. If that channel failed to come up (Discord down, no
+  // Manage Channels) the zone convo has no threadId yet, and without this
+  // guard the next zone line falls through to ensureThread, which reads the
+  // key as not starting with `g:` and mints a PRIVATE thread for the town
+  // square. Self-healing on the next boot, but a private thread should never
+  // exist for a conversation everyone is a member of.
+  if (c.kind === 'zone') return null;
   try {
     const th = await discord.ensureThread(key, c.title || key, discordIdsOf(c.members));
     // The id the call came back with, always: a thread rebuilt after a
@@ -401,7 +409,13 @@ const routes = {
     // once whether anything lies deeper -- that is the only way the flag
     // stays a fact for a conversation older than our memory (R-D2.4).
     const page = openPage({ store, key, uid, limit, until });
-    let more = page.more;
+    // A courier past its five minutes is not shown, whatever the sweep has
+    // got round to (TZ-4 R-D6.1). Filtered BEFORE More/Before are settled:
+    // a page can be nothing but expired marks, and answering More: false
+    // off the unfiltered page then reads as an empty conversation with no
+    // way to load older lines, when the store in fact has more beyond it.
+    const shown = page.lines.filter((l) => !markStale({ text: l.Text, at: l.At }));
+    let more = page.more || shown.length < page.lines.length;
     const anchor = anchorOf(key, page.before);
     if (!more && c.threadId && anchor) {
       try {
@@ -410,9 +424,6 @@ const routes = {
         console.warn(`[chat] hasOlder failed: ${err.message}`);
       }
     }
-    // A courier past its five minutes is not shown, whatever the sweep has
-    // got round to (TZ-4 R-D6.1).
-    const shown = page.lines.filter((l) => !markStale({ text: l.Text, at: l.At }));
 
     return {
       Id: key,
