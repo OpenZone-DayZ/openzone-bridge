@@ -1043,15 +1043,27 @@ export class DiscordSide {
   async ensureThread(key, title, memberDiscordIds) {
     const known = this.store.convo(key);
     if (known?.threadId) {
+      // ONLY "GONE" MEANS GONE -- the same discipline as fetchThread and
+      // #lookUp right below. This caught EVERY failure and built a second
+      // thread: a rate limit, a five-hundred, a member who could not be
+      // re-added, an un-archive that did not take. Each one left an orphan
+      // in the guild and moved the conversation to a thread nobody was in.
+      let th = null;
       try {
-        const th = await this.client.channels.fetch(known.threadId);
-        if (th.archived) await th.setArchived(false);
+        th = await this.client.channels.fetch(known.threadId);
+      } catch (e) {
+        if (!(e && (e.code === 10003 || e.code === 10004 || e.code === 10008))) throw e;
+        console.warn(`[discord] thread ${known.threadId} for ${key} is gone; creating a new one`);
+      }
+
+      if (th) {
+        // Neither of these is proof the thread has died, so neither is
+        // allowed to cause a second one.
+        if (th.archived) {
+          try { await th.setArchived(false); } catch (e) { console.warn(`[discord] could not wake thread ${th.id} (${e.message})`); }
+        }
         await this.#invite(th, memberDiscordIds);
         return th;
-      } catch {
-        // Thread deleted in Discord. Discord is the truth, so we make a new
-        // one rather than pretending the old one is still there.
-        console.warn(`[discord] thread ${known.threadId} for ${key} is gone; creating a new one`);
       }
     }
 

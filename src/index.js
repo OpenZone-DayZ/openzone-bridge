@@ -105,6 +105,13 @@ function ownId() {
   return `o${Date.now()}${String(ownSeq).padStart(5, '0')}`;
 }
 
+// The same trick for a group key, which is minted once and never changes.
+let groupN = 0;
+function groupSeq() {
+  groupN = (groupN + 1) % 1296;
+  return groupN.toString(36).padStart(2, '0');
+}
+
 let http;
 
 const discord = new DiscordSide(cfg, store, (key, msg) => {
@@ -184,16 +191,50 @@ function discordIdsOf(members) {
   return members.map((uid) => store.linkOf(uid)?.discordId).filter(Boolean);
 }
 
-async function startConversation(key, kind, title, members) {
-  const thread = await discord.ensureThread(key, title, discordIdsOf(members));
+// THE ROW FIRST, AND THE THREAD ONLY IF THE GUILD IS MEANT TO SEE IT.
+//
+// A private thread used to be created for every conversation whether the
+// server mirrored chat or not: its title ("<name> & <name>") and its member
+// list went into the guild for talks the server had explicitly decided to
+// keep out of it -- the failure this file calls unrecoverable a few hundred
+// lines down. And when Discord refused, the whole route answered 500 and
+// nothing was stored at all, so a scripted NPC's pager line could vanish
+// over a rate limit.
+//
+// The conversation is ours; Discord is a surface. Turning the mirror on
+// later builds the missing threads (mirror.js).
+async function startConversation(key, kind, title, members, serverId) {
   store.putConvo(key, {
-    threadId: thread.id,
+    threadId: '',
     kind,
     title,
     members,
     createdAt: new Date().toISOString(),
   });
+  await bindThread(key, serverId);
   return key;
+}
+
+// The Discord thread of a conversation, when chat is mirrored for the server
+// that is asking. Best effort by design: a conversation with no thread reads
+// and writes perfectly well in game.
+async function bindThread(key, serverId) {
+  const c = store.convo(key);
+  if (!c || !mirrored(serverId, 'chat')) return null;
+  try {
+    const th = await discord.ensureThread(key, c.title || key, discordIdsOf(c.members));
+    // The id the call came back with, always: a thread rebuilt after a
+    // deletion used to be created and then dropped on the floor, and say()
+    // kept posting into the id that no longer existed.
+    if (th && c.threadId !== th.id) {
+      c.threadId = th.id;
+      store.putConvo(key, c);
+    }
+    return th;
+  } catch (err) {
+    console.warn(`[chat] ${key} has no thread in the guild (${err.message}); the conversation lives in the store`);
+    return null;
+  }
 }
 
 // Shared map marks are couriers, not backups: five minutes on the wire,
@@ -480,7 +521,7 @@ const routes = {
     }
   },
 
-  '/v1/chat/start': async ({ Json }) => {
+  '/v1/chat/start': async ({ Json, ServerId }) => {
     const { Uid: uid, Name: name, OtherUid: otherUid, OtherName: otherName } = Json;
     store.rememberName(uid, name);
     store.rememberName(otherUid, otherName);
@@ -493,11 +534,11 @@ const routes = {
     const key = Store.directKey(Json.MyKey || uid, Json.OtherKey || otherUid);
     const c = store.convo(key);
     if (c) return { Id: key };
-    await startConversation(key, 'direct', `${name} & ${otherName}`, [uid, otherUid]);
+    await startConversation(key, 'direct', `${name} & ${otherName}`, [uid, otherUid], ServerId);
     return { Id: key };
   },
 
-  '/v1/chat/group_new': async ({ Json }) => {
+  '/v1/chat/group_new': async ({ Json, ServerId }) => {
     const { Uid: uid, Title: title, Desc: desc, Max: max } = Json;
 
     // HOW MANY GROUPS THIS DEVICE MAY FOUND (TZ-4 R-F1.6). The number comes
@@ -509,8 +550,12 @@ const routes = {
       if (mine >= ceiling) return { Error: 'groups_full' };
     }
 
-    const key = `g:${uid}:${Date.now().toString(36)}`;
-    await startConversation(key, 'group', title || 'group', [uid]);
+    // Minted once and for good -- the founder's uid is in it forever -- so
+    // two group_new calls in the same millisecond must not arrive at the
+    // same key: the second used to overwrite the first's row and leave its
+    // thread orphaned in the guild. Millisecond plus a counter, like ownId.
+    const key = `g:${uid}:${Date.now().toString(36)}${groupSeq()}`;
+    await startConversation(key, 'group', title || 'group', [uid], ServerId);
     if (desc) {
       const c = store.convo(key);
       c.desc = byteClip(desc, 200);
@@ -585,7 +630,7 @@ const routes = {
     const key = `npc:${npcId}:${uid}`;
     let c = store.convo(key);
     if (!c) {
-      await startConversation(key, 'npc', npcName || npcId, [uid]);
+      await startConversation(key, 'npc', npcName || npcId, [uid], ServerId);
       c = store.convo(key);
     }
     // The NPC may be renamed between mod versions; the pager follows.
@@ -616,7 +661,12 @@ const routes = {
 
     if (npcMirrored) {
       try {
-        await discord.say(c.threadId, npcName || npcId, byteClip(text), null, line?.id);
+        // The thread may not exist yet: the mirror can have been turned on
+        // after this pager conversation was born.
+        if (!c.threadId) await bindThread(key, ServerId);
+        const threadId = store.convo(key)?.threadId || '';
+        if (!threadId) throw new Error('no thread in the guild');
+        await discord.say(threadId, npcName || npcId, byteClip(text), null, line?.id);
       } catch (err) {
         if (line) store.setInDiscord(key, line.id, false);
         console.warn(`[npc] stored but not mirrored: ${err.message}`);
@@ -673,7 +723,7 @@ const routes = {
     return { ok: true };
   },
 
-  '/v1/chat/invite_accept': async ({ Json }) => {
+  '/v1/chat/invite_accept': async ({ Json, ServerId }) => {
     const { Uid: uid, Id: key } = Json;
     if (!store.hasInvite(key, uid)) return { Error: 'no_chat' };
     const c = store.convo(key);
@@ -694,7 +744,10 @@ const routes = {
       c.members.push(uid);
       store.putConvo(key, c);
     }
-    await discord.ensureThread(key, c.title, discordIdsOf(c.members));
+    // The new member joins the thread, and whatever thread id comes back is
+    // written down -- the result used to be discarded, so a thread rebuilt
+    // here was never spoken into again.
+    await bindThread(key, ServerId);
     return { ok: true };
   },
 
@@ -795,7 +848,11 @@ const routes = {
     // conversation and every other member will read it.
     if (alsoInDiscord) {
       try {
-        await discord.say(c.threadId, who, text, author, stored?.id);
+        // A conversation born while the mirror was off has no thread yet.
+        if (!c.threadId) await bindThread(key, ServerId);
+        const threadId = store.convo(key)?.threadId || '';
+        if (!threadId) throw new Error('no thread in the guild');
+        await discord.say(threadId, who, text, author, stored?.id);
       } catch (err) {
         // The guild refused, so the line is NOT there -- say so in the
         // record, or the store would later drop it believing Discord has a
