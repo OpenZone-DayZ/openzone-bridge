@@ -32,34 +32,30 @@
 // against the global 50/s budget shared with chat; the store pays once.
 
 import { ChannelType } from 'discord.js';
-import { byteClip, GAME_STR_MAX } from './clip.js';
+import { byteClip, stamp, GAME_STR_MAX } from './clip.js';
 
 const KEEP = 50;
 const BODY_MAX = GAME_STR_MAX; // game JSON parse cap, see clip.js
 
-function stamp(ts) {
-  return new Date(ts).toISOString().slice(0, 19).replace('T', ' ');
-}
-
 export class News {
-  // `store` is the home. Without one the feed still works in memory, which
-  // is what every existing test and the old behaviour expect.
-  constructor(store = null) {
+  // The store is the home, and it is not optional: the feed exists so that a
+  // bot which cannot reach the guild still has news (TZ-2 R1.1).
+  constructor(store) {
     this.discord = null;
     this.channelId = null;
     this.store = store;
+    // A read cache, not a second home: every write goes through #keep, which
+    // writes the store first. It exists because a PDA opening the feed would
+    // otherwise parse fifty rows for a list of titles.
     this.posts = new Map(); // threadId -> { Id, Title, Who, At, ts, Body, Replies }
-
-    // What we already own, before Discord is asked anything. This is the
-    // whole point: news exist even when the guild is unreachable.
-    for (const p of store ? store.newsAll() : []) this.posts.set(p.Id, p);
+    for (const p of store.newsAll()) this.posts.set(p.Id, p);
   }
 
   // One place to write, so nothing can update the memory copy and forget
   // the durable one.
   #keep(post) {
     this.posts.set(post.Id, post);
-    this.store?.newsPut(post);
+    this.store.newsPut(post);
   }
 
   async start(discord, knownId) {
@@ -105,7 +101,7 @@ export class News {
       }
     });
     c.on('threadUpdate', (_o, th) => this.#onThread(th));
-    c.on('threadDelete', (th) => { this.posts.delete(th.id); this.store?.newsDrop(th.id); });
+    c.on('threadDelete', (th) => { this.posts.delete(th.id); this.store.newsDrop(th.id); });
     // The starter message shares the thread's id -- that is how a forum
     // post's body edit is told apart from a mere reply.
     c.on('messageCreate', (m) => { if (m.id === m.channelId) this.#onStarter(m); });
@@ -199,8 +195,8 @@ export class News {
     if (fresh && this.posts.size > KEEP) {
       const oldest = [...this.posts.values()].sort((a, b) => a.ts - b.ts)[0];
       this.posts.delete(oldest.Id);
-      this.store?.newsDrop(oldest.Id);
-      this.store?.newsTrim(KEEP);
+      this.store.newsDrop(oldest.Id);
+      this.store.newsTrim(KEEP);
     }
   }
 

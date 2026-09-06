@@ -10,7 +10,7 @@
 // Discord account can still be heard. Linking buys reading and writing FROM
 // Discord; it is not the price of speaking in game.
 
-import { byteClip } from './clip.js';
+import { byteClip, stamp } from './clip.js';
 import {
   Client,
   GatewayIntentBits,
@@ -957,6 +957,15 @@ export class DiscordSide {
     return hook;
   }
 
+  // Is this one of the webhooks the bridge itself created? There are at most
+  // a handful: the chat parent's, the zone's, and one per typed channel.
+  #ourWebhook(id) {
+    if (!id) return false;
+    if (this.webhook?.id === id || this.zoneWebhook?.id === id) return true;
+    for (const h of this.hookByChannel?.values() ?? []) if (h?.id === id) return true;
+    return false;
+  }
+
   // A message appeared in Discord. If it belongs to a conversation we know,
   // it goes to the game — including the webhook posts we made ourselves,
   // because the store, not this handler, decides what is a duplicate. That
@@ -987,7 +996,13 @@ export class DiscordSide {
     // A webhook echo can only be a line WE sent, so it is allowed the loose
     // tiers of the ladder; a human-typed message must match exactly or not
     // at all -- misattributing a stranger's line is worse than dropping ours.
-    const ours = !!m.webhookId || m.author.id === this.client.user.id;
+    // OURS MEANS OUR OWN WEBHOOK, not any webhook.
+    //
+    // Any webhook post in a channel we carry used to be allowed the loose
+    // tiers of the claim ladder, so another bot's line in #зона could be
+    // matched against a pending claim of ours: that line was swallowed, and
+    // our own echo later arrived unclaimed and was stored a second time.
+    const ours = this.#ourWebhook(m.webhookId) || (!m.webhookId && m.author.id === this.client.user.id);
     // OUR OWN ECHO IS ALREADY HOME -- DO NOT STORE IT TWICE.
     //
     // Since TZ-2 the line is written to the store when the game sends it,
@@ -1026,7 +1041,7 @@ export class DiscordSide {
 
     this.onMessage(convo.key, {
       id: m.id,
-      at: new Date(m.createdTimestamp).toISOString().slice(0, 19).replace('T', ' '),
+      at: stamp(m.createdTimestamp),
       uid,
       who,
       text,
@@ -1293,7 +1308,7 @@ export class DiscordSide {
 
       out.push({
         id: m.id,
-        at: new Date(m.createdTimestamp).toISOString().slice(0, 19).replace('T', ' '),
+        at: stamp(m.createdTimestamp),
         uid,
         who,
         text: byteClip(text),

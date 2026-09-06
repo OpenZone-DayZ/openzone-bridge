@@ -19,3 +19,11 @@ export function byteClip(s, max = GAME_STR_MAX) {
   while (cut > 0 && (b[cut] & 0xc0) === 0x80) cut--;
   return b.toString('utf8', 0, cut);
 }
+
+// The stamp every record in this bridge wears: UTC, "YYYY-MM-DD HH:MM:SS".
+//
+// Spelled out by hand in six places, and the spelling matters -- the store
+// compares these as strings, and the game shows them as they arrive.
+export function stamp(ms = Date.now()) {
+  return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+}

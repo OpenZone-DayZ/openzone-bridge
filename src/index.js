@@ -15,7 +15,7 @@ import { join, dirname } from 'node:path';
 // simply not shown.
 
 import 'dotenv/config';
-import { byteClip } from './clip.js';
+import { byteClip, stamp } from './clip.js';
 import { Store, snowflake } from './store.js';
 import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './history.js';
 import { fillMirror } from './mirror.js';
@@ -127,9 +127,6 @@ const discord = new DiscordSide(cfg, store, (key, msg) => {
 const codes = new LinkCodes(store);
 discord.useCodes(codes);
 
-// The roster lives in its own file, not in the bridge state: store.save()
-// rewrites the whole state document on every single chat message, and role
-// ids have no business riding that.
 // THE ROLES HOME IS THE STORE (TZ-2 section 15). The old JSON registry is
 // read exactly once, on the first start after the move, to carry the
 // guild's role ids and the admin's renames into the tables.
@@ -253,7 +250,6 @@ function queuePush(uid, line, kind = 'chat') {
   pendingPushes.push({ seq: pushSeq, uid, kind, json: JSON.stringify(line) });
   if (pendingPushes.length > 200) pendingPushes.splice(0, pendingPushes.length - 200);
 }
-const stampNow = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
 
 // How long a shared map mark lives in a conversation before the sweep
 // deletes it (TZ-4 R-D6.1). A setting, not a constant: MARK_TTL_SECONDS in
@@ -330,20 +326,22 @@ function anchorOf(key, id) {
 
 async function pairFreeze(a, b, frozen) {
   if (!a || !b) return { Error: 'no_chat' };
+  // EVERY direct conversation the pair has, not the first one found. The key
+  // is derived from CHARACTER keys, so one pair of accounts can hold several
+  // -- a permadeath makes a new one -- and the rest stayed writable while the
+  // contact was supposed to be broken.
   for (const c of store.convosAll()) {
-    const key = c.key;
     if (c.kind !== 'direct') continue;
     if (!c.members.includes(a) || !c.members.includes(b)) continue;
 
     c.pairFrozen = frozen;
-    store.putConvo(key, c);
+    store.putConvo(c.key, c);
     if (c.threadId) {
       try { await discord.lockThread(c.threadId, frozen); }
       catch (err) { console.warn(`[chat] thread lock failed: ${err.message}`); }
     }
-    return { ok: true };
   }
-  // No conversation yet -- nothing to freeze, and that is fine.
+  // None yet -- nothing to freeze, and that is fine.
   return { ok: true };
 }
 
@@ -642,7 +640,7 @@ const routes = {
 
     const line = store.addMessage(key, {
       id: ownId(),
-      at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+      at: stamp(),
       uid: null,
       who: npcName || npcId,
       text: byteClip(text),
@@ -707,7 +705,7 @@ const routes = {
     queuePush(otherUid, {
       Uid: otherUid,
       Id: '',
-      At: stampNow(),
+      At: stamp(),
       Who: store.nameOf(uid) || '',
       Text: `Запрошення до групи «${c.title}»`,
       Mine: false,
@@ -823,7 +821,7 @@ const routes = {
 
     const stored = store.addMessage(key, {
       id: ownId(),
-      at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+      at: stamp(),
       uid: author,
       who,
       text: byteClip(text),
@@ -886,21 +884,16 @@ const routes = {
   // write route checks again anyway. Two checks, because a list is a hint
   // and a grant is a fact.
   '/v1/news/voices': async ({ Json }) => {
-    const uid = Json && Json.Uid;
-    const link = uid ? store.linkOf(uid) : null;
-    const member = link ? discord.memberOf(link.discordId) : null;
-    const resolved = uid ? roles.viewOf(uid) : null;
-    const admin = member ? discord.isAdminMember(member) : false;
-
+    const c = caller(Json && Json.Uid);
     return {
       // The name he signs with when he picks nobody. Empty for someone the
       // bridge cannot name at all, and the page says so rather than offering
       // an author it made up.
-      Self: (uid && store.nameOf(uid)) || member?.displayName || '',
-      Admin: admin,
-      Leader: !!(resolved && resolved.Posts && resolved.Posts.includes('leader')),
-      Org: (resolved && resolved.Org) || '',
-      Voices: personas.allowedFor(resolved, admin),
+      Self: c.self,
+      Admin: c.admin,
+      Leader: c.leader,
+      Org: c.org,
+      Voices: personas.allowedFor(c.resolved, c.admin),
     };
   },
 
@@ -921,21 +914,17 @@ const routes = {
     if (!title || !String(title).trim()) return { Error: 'no_title' };
     if (!body || !String(body).trim()) return { Error: 'no_body' };
 
-    const link = uid ? store.linkOf(uid) : null;
-    const member = link ? discord.memberOf(link.discordId) : null;
-    const resolved = uid ? roles.viewOf(uid) : null;
-    const admin = member ? discord.isAdminMember(member) : false;
+    const { resolved, admin, leader, self } = caller(uid);
 
     // WHO MAY WRITE AT ALL (TZ-6 §2). Admins and faction leaders, nobody
     // else -- not a member of an organisation, not a linked stalker, not an
     // unlinked one. Checked before the voice, because "you may not write"
     // and "that is not your name" are different refusals and the first one
     // has to come first.
-    const leader = !!(resolved && resolved.Posts && resolved.Posts.includes('leader'));
     if (!admin && !leader) return { Error: 'not_allowed' };
 
     // Under his own game name unless he names a voice.
-    let who = (uid && store.nameOf(uid)) || member?.displayName || '';
+    let who = self;
 
     // ONE RULE FOR BOTH SURFACES AND BOTH KINDS OF CALLER (TZ-6 R1.2/R1.4).
     //
@@ -949,7 +938,8 @@ const routes = {
     const wanted = String(asName || '').trim();
     if (wanted) {
       const allowed = personas.allowedFor(resolved, admin);
-      if (!allowed.includes(wanted)) return { Error: 'not_your_voice', Allowed: allowed };
+      // Allowed[] used to ride along here; no game type ever declared it.
+      if (!allowed.includes(wanted)) return { Error: 'not_your_voice' };
       who = wanted;
     } else if (!admin && !who) {
       // Nobody we can name: an unlinked non-admin has no author at all.
@@ -997,26 +987,6 @@ const routes = {
     };
   },
 
-  // The game asking for somebody's roles to be CHANGED.
-  //
-  // The only inbound write there is, and deliberately the only one. The game
-  // holds no faction of its own: it asks here, the Discord role changes, and
-  // the change reaches the game as an ordinary projection on the next poll.
-  // One home for the fact and one direction of travel -- so a refusal here
-  // means nothing changed anywhere, which is what makes it safe to report the
-  // refusal honestly instead of papering over it.
-  //
-  // AUTHORITY IS RE-CHECKED HERE. The game holds the shared secret and is
-  // trusted, and it does its own check first; that does not make it the only
-  // thing between a player and a role. Admin is the exception: whether a
-  // SteamID is a server admin is knowledge only the game has, so that claim
-  // is taken on the secret alone.
-  // Every linked player's projection, present in the Zone or not (TZ-4
-  // R-C4.2). The game's own admin roster used to list only who was online,
-  // because the projections it keeps live only while a player is connected
-  // -- so an offline player could be neither wiped nor assigned. The bot's
-  // base is the one place that knows everybody. The game adds the online
-  // players the bot has never heard of (not linked) itself.
   // Turning a mirror on from the game's admin console (TZ-2 R5.2): push the
   // history of the kind from the base into the guild, report counts, and
   // only then does the game write Mirror: true. Idempotent -- see mirror.js.
@@ -1044,10 +1014,11 @@ const routes = {
     });
     if (!r.ok) return { Ok: false, Why: r.why };
     console.log(`[roles] admin ${r.created ? 'created' : 'changed'} faction ${r.slug}`);
+    // Created/Moved are not sent back: OZ_BridgeAck declares Ok and Why.
     rolesMirror.afterCatalog(discord.guild, r, 'faction edited in the game').catch((e) => {
       console.warn(`[roles] mirror did not follow the faction edit: ${e.message}`);
     });
-    return { Ok: true, Why: '', Created: r.created };
+    return { Ok: true, Why: '' };
   },
 
   '/v1/factions/remove': async ({ Json }) => {
@@ -1058,13 +1029,18 @@ const routes = {
     rolesMirror.afterCatalog(discord.guild, r, 'faction removed in the game').catch((e) => {
       console.warn(`[roles] mirror did not follow the removal: ${e.message}`);
     });
-    return { Ok: true, Why: '', Moved: r.touched.length };
+    return { Ok: true, Why: '' };
   },
 
   // Everybody the bot knows -- members of the tables and linked accounts
   // alike -- for the admin console (TZ-4 R-C4.2). No guild needed: the
-  // tables are the home. The game adds the online players the bot has never
-  // heard of itself.
+  // tables are the home.
+  //
+  // The game's own admin roster listed only who was online, because the
+  // projections it keeps live only while a player is connected -- so an
+  // offline player could be neither wiped nor assigned. This base is the one
+  // place that knows everybody; the game adds the online players the bot has
+  // never heard of itself.
   '/v1/roles/roster': async () => {
     const rows = [];
     const seen = new Set();
@@ -1084,10 +1060,25 @@ const routes = {
     return { Ok: true, Why: '', Rows: rows };
   },
 
-  // A membership change from the game. The row is written first and the
-  // answer comes from the row; the guild follows afterwards when the roles
-  // mirror is on, and a Discord failure never turns this into a refusal
-  // (R7.4). A Discord link is not required of anybody (R7.5).
+  // The game asking for somebody's roles to be CHANGED.
+  //
+  // The only inbound write there is, and deliberately the only one. The game
+  // holds no faction of its own: it asks here, the row changes, and the
+  // change reaches the game as an ordinary projection on the next poll. One
+  // home for the fact and one direction of travel -- so a refusal here means
+  // nothing changed anywhere, which is what makes it safe to report the
+  // refusal honestly instead of papering over it.
+  //
+  // AUTHORITY IS RE-CHECKED HERE. The game holds the shared secret and is
+  // trusted, and it does its own check first; that does not make it the only
+  // thing between a player and a role. Admin is the exception: whether a
+  // SteamID is a server admin is knowledge only the game has, so that claim
+  // is taken on the secret alone.
+  //
+  // The row is written first and the answer comes from the row; the guild
+  // follows afterwards when the roles mirror is on, and a Discord failure
+  // never turns this into a refusal (R7.4). A Discord link is not required
+  // of anybody (R7.5).
   '/v1/roles/apply': async ({ Json }) => {
     const target = String(Json.TargetUid || '').trim();
     if (!target) return { Ok: false, Why: 'no target' };
@@ -1108,6 +1099,22 @@ const routes = {
     return { Ok: true, Why: '' };
   },
 };
+
+// The five things every news route asks about the person calling it, worked
+// out once: both routes spelled this out identically.
+function caller(uid) {
+  const link = uid ? store.linkOf(uid) : null;
+  const member = link ? discord.memberOf(link.discordId) : null;
+  const resolved = uid ? roles.viewOf(uid) : null;
+  const admin = member ? discord.isAdminMember(member) : false;
+  return {
+    resolved,
+    admin,
+    leader: !!(resolved && resolved.Posts && resolved.Posts.includes('leader')),
+    org: (resolved && resolved.Org) || '',
+    self: (uid && store.nameOf(uid)) || member?.displayName || '',
+  };
+}
 
 // What a leader is allowed to do, and only inside his own faction.
 //

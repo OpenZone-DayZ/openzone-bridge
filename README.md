@@ -45,6 +45,20 @@ compile on the host) and a filled-in `.env` (see `SETUP.md`). Then:
 Both scripts check the Node version, install the two dependencies on first
 run, refuse to start without `.env`, and then just run `node src/index.js`.
 
+## Tests
+
+```
+npm run check   # every file in src/, test/ and scripts/ still parses
+npm test        # every file under test/
+```
+
+Most of the suite runs offline against a throwaway SQLite file and touches
+neither Discord nor the stand. Two need more: `test/roundtrip.mjs` talks to a
+**running** bridge on `BRIDGE_PORT` and reads the shared secret from `.env`
+(it never prints it), and it polls under a ServerId of its own so the guild
+sees nothing and drops the rows it wrote when it finishes. `BRIDGE_DB` points
+any of them at another database.
+
 ## State
 
 Everything the bridge remembers -- account links, conversation keys, the chat

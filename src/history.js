@@ -16,22 +16,24 @@
 // the Discord tier (lines deeper than the store remembers) stays in the
 // route, because only the route has a client.
 
+import { stamp } from './clip.js';
+
 // The freeze stamp of a sealed capsule, in the store's own dialect. The
 // store compares it against the `at` column; both are UTC.
 export function untilStamp(until) {
   const ms = Number(until) || 0;
-  return ms > 0 ? new Date(ms).toISOString().slice(0, 19).replace('T', ' ') : '';
+  return ms > 0 ? stamp(ms) : '';
 }
 
 const pageSize = (limit) => Math.min(Math.max(Number(limit) || 20, 1), 100);
 
 export function openPage({ store, key, uid, limit, until }) {
-  const stamp = untilStamp(until);
-  const shown = store.tailOf(key, pageSize(limit), stamp);
+  const cut = untilStamp(until);
+  const shown = store.tailOf(key, pageSize(limit), cut);
   return {
     lines: shown.map((m) => toLine(m, uid)),
     // More lines exist in the store before the ones shown: a fact.
-    more: shown.length > 0 && store.hasBefore(key, shown[0].id, stamp),
+    more: shown.length > 0 && store.hasBefore(key, shown[0].id, cut),
     before: shown[0]?.id || '',
   };
 }
@@ -41,11 +43,11 @@ export function openPage({ store, key, uid, limit, until }) {
 // the only party that remembers past the tail.
 export function olderFromStore({ store, key, uid, before, limit, until }) {
   if (!before) return null;
-  const stamp = untilStamp(until);
-  const chunk = store.beforeOf(key, before, pageSize(limit), stamp);
+  const cut = untilStamp(until);
+  const chunk = store.beforeOf(key, before, pageSize(limit), cut);
   if (!chunk.length) return null;
 
-  const more = store.hasBefore(key, chunk[0].id, stamp);
+  const more = store.hasBefore(key, chunk[0].id, cut);
   return {
     lines: chunk.map((m) => toLine(m, uid)),
     more,
