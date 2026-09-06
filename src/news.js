@@ -58,6 +58,29 @@ export class News {
     this.store.newsPut(post);
   }
 
+  // Everything about a post the game can see. A threadUpdate fires on archive
+  // flips and other noise the feed does not show, and a poll envelope costs
+  // every player's news cache -- so the ring below asks this first.
+  #face(p) {
+    if (!p) return '';
+    return JSON.stringify([p.Title, p.Who, p.At, p.Replies, p.Body]);
+  }
+
+  // TELL THE GAME THE FEED MOVED.
+  //
+  // The core caches bridge reads and drops them by KIND when a poll envelope
+  // arrives (OZ_BridgeCache.Invalidate). Only a genuinely new post used to
+  // push one, so an edited -- or a DELETED -- post stayed in v1/news/list and
+  // v1/news/open for the full 60 s TTL. Before the cache was made per-kind any
+  // chat line cleared everything and hid this.
+  //
+  // `fresh` separates "a new post" from "a post changed": the first is worth a
+  // toast on every PDA, the second is only worth forgetting the cache.
+  #ring(post, fresh) {
+    if (!post) return;
+    this.onNews?.(post, fresh);
+  }
+
   async start(discord, knownId) {
     this.discord = discord;
     const guild = discord.guild;
@@ -91,25 +114,17 @@ export class News {
     await this.#warm(ch);
 
     const c = discord.client;
-    c.on('threadCreate', async (th) => {
-      const fresh = !this.posts.has(th.id);
-      await this.#onThread(th);
-      // Тільки СПРАВДІ новий пост дзвонить у гру -- редагування мовчать.
-      if (fresh) {
-        const p = this.posts.get(th.id);
-        if (p) this.onFresh?.(p);
-      }
-    });
+    // Пост, редагування й видалення однаково застарюють кеш новин у грі;
+    // тостом дзвонить лише справді новий -- див. #ring.
+    c.on('threadCreate', (th) => this.#onThread(th));
     c.on('threadUpdate', (_o, th) => this.#onThread(th));
-    c.on('threadDelete', (th) => { this.posts.delete(th.id); this.store.newsDrop(th.id); });
+    c.on('threadDelete', (th) => this.drop(th.id));
     // The starter message shares the thread's id -- that is how a forum
     // post's body edit is told apart from a mere reply.
-    c.on('messageCreate', (m) => { if (m.id === m.channelId) this.#onStarter(m); });
-    c.on('messageUpdate', (_o, m) => { if (m && m.id === m.channelId) this.#onStarter(m); });
-    c.on('messageDelete', (m) => {
-      const p = this.posts.get(m.channelId);
-      if (p && m.id === m.channelId) { p.Body = ''; this.#keep(p); }
-    });
+    c.on('messageCreate', (m) => { if (m.id === m.channelId) this.edit(m.channelId, m.content, m.member?.displayName || m.author?.username); });
+    c.on('messageUpdate', (_o, m) => { if (m && m.id === m.channelId) this.edit(m.channelId, m.content, m.member?.displayName || m.author?.username); });
+    // The starter is gone: the post keeps its title and loses its body.
+    c.on('messageDelete', (m) => { if (m.id === m.channelId) this.edit(m.channelId, '', ''); });
 
     console.log(`[news] #новини ready, ${this.posts.size} post(s) cached`);
     return ch;
@@ -155,6 +170,8 @@ export class News {
     if (th.parentId !== this.channelId) return;
 
     const known = this.posts.get(th.id);
+    // Taken BEFORE the mutations below, because `post` is `known` itself.
+    const was = this.#face(known);
     const post = known || {
       Id: th.id, Title: '', Who: '', At: '', ts: 0, Body: '', Replies: 0,
     };
@@ -198,15 +215,37 @@ export class News {
       this.store.newsDrop(oldest.Id);
       this.store.newsTrim(KEEP);
     }
+
+    // The warm-up sweep is silent on purpose: it runs before the game has
+    // asked anything, and fifty envelopes at start-up would be fifty toasts.
+    if (!warm && (fresh || this.#face(post) !== was)) this.#ring(post, fresh);
   }
 
-  #onStarter(m) {
-    const p = this.posts.get(m.channelId);
+  // The body of a post changed -- the starter message was written, edited, or
+  // deleted (empty body). Public because that is what "an edit" is, and it is
+  // what the test drives without a Discord client.
+  edit(id, body, who) {
+    const p = this.posts.get(id);
     if (!p) return;
-    p.Body = byteClip(m.content || '', BODY_MAX);
-    p.Who = m.member?.displayName || m.author?.username || p.Who;
+
+    const was = this.#face(p);
+    p.Body = byteClip(body || '', BODY_MAX);
+    p.Who = who || p.Who;
     p.noStarter = false;
     this.#keep(p);
+
+    if (this.#face(p) !== was) this.#ring(p, false);
+  }
+
+  // The post is gone. The game holds a list that still has it, so this is
+  // news to it in exactly the way a new post is.
+  drop(id) {
+    const p = this.posts.get(id);
+    if (!p) return;
+
+    this.posts.delete(id);
+    this.store.newsDrop(id);
+    this.#ring(p, false);
   }
 
   list() {

@@ -74,5 +74,32 @@ store.newsTrim(2);
 ok('trimming drops the oldest and keeps the cap',
   new News(new Store(path, 100)).list().Items.map((p) => p.Title), ['third', 'newer']);
 
+// AN EDIT AND A DELETE ARE NEWS TOO.
+//
+// The game caches v1/news/list and v1/news/open for a minute and forgets them
+// when a poll envelope of kind "news" arrives. Only a genuinely new post used
+// to push one, so an edited -- or deleted -- post stayed on every PDA for the
+// full TTL. Still no Discord here: the two doors those event handlers call are
+// public for exactly this reason.
+//
+// Last in the file: dropping a post touches the store the assertions above
+// read.
+const rung = [];
+news.onNews = (p, fresh) => rung.push([p.Id, fresh]);
+
+news.edit('1', 'a corrected body', 'admin');
+ok('an edited body rings, and not as a fresh post', rung, [['1', false]]);
+ok('the edit is what open() serves', news.open('1').Body, 'a corrected body');
+
+news.edit('1', 'a corrected body', 'admin');
+ok('the same body again rings nothing', rung.length, 1);
+
+news.drop('2');
+ok('a deleted post rings', rung, [['1', false], ['2', false]]);
+ok('and it is gone from the list', news.list().Items.map((p) => p.Title), ['older']);
+
+news.drop('2');
+ok('dropping what is already gone rings nothing', rung.length, 2);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

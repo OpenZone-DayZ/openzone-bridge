@@ -1519,7 +1519,15 @@ setInterval(() => {
 // is the whole wiring: News reads what it already owns at construction and
 // writes through on every change.
 const news = new News(store);
-news.onFresh = (p) => queuePush(null, { Id: p.Id, Title: p.Title, Who: p.Who, At: p.At }, 'news');
+
+// EVERY change to the feed rides, not only a new post. The game caches
+// v1/news/list and v1/news/open for a minute and drops them when an envelope
+// of this kind arrives, so an edited or deleted post used to survive in every
+// PDA for the full TTL. Fresh tells a new post (worth a toast) from a change
+// (worth forgetting the cache).
+news.onNews = (p, fresh) => queuePush(null, {
+  Id: p.Id, Title: p.Title, Who: p.Who, At: p.At, Fresh: fresh,
+}, 'news');
 
 // THE FURNITURE IS BUILT BEST EFFORT, AND A MISSING PIECE IS NOT A DEAD BOT.
 //
