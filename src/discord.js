@@ -999,8 +999,20 @@ export class DiscordSide {
     // A claim exists only for lines WE sent, so this cannot swallow anything
     // a human typed in Discord: those never match and fall through below.
     const claimed = this.#claim(m.channel.id, who, text, ours);
-    if (claimed)
+    if (claimed) {
+      // WHICH DISCORD MESSAGE OUR LINE BECAME. Written down here and
+      // nowhere else: this is the only moment both ids are in one place.
+      // Without it the mark sweep asked Discord to delete a line by our own
+      // id and history paging anchored on one Discord cannot resolve.
+      if (claimed.ownId) {
+        try {
+          this.store.noteDiscordId(convo.key, claimed.ownId, m.id);
+        } catch (e) {
+          console.warn(`[discord] could not note the id of ${claimed.ownId}: ${e.message}`);
+        }
+      }
       return;
+    }
 
     let uid = null;
     if (!m.webhookId) {
@@ -1351,7 +1363,7 @@ export class DiscordSide {
   // lands inside the conversation rather than in the parent channel.
   // `uid` is who said it, noted before the line leaves so the echo can be
   // recognised as theirs whichever way the race falls.
-  async say(threadId, name, text, uid) {
+  async say(threadId, name, text, uid, ownId = '') {
     const who = name.slice(0, 80);
     const body = text.slice(0, 1900);
 
@@ -1362,7 +1374,9 @@ export class DiscordSide {
     // anonymous shout to them. Filing the claim with uid null makes the
     // echo match itself exactly and resolve to null: nobody's, which is
     // the whole point of anonymity.
-    this.#expect(threadId, who, body, uid ?? null);
+    // ownId is the store's own name for this line, carried so the echo can
+    // tell the store which Discord message it became (see #incoming).
+    this.#expect(threadId, who, body, uid ?? null, ownId);
 
     try {
       // The zone is a plain channel: its own webhook, no threadId.
@@ -1410,8 +1424,8 @@ export class DiscordSide {
     }
   }
 
-  #expect(threadId, who, text, uid) {
-    const entry = { threadId, who, text, uid };
+  #expect(threadId, who, text, uid, ownId = '') {
+    const entry = { threadId, who, text, uid, ownId };
     this.pending.push(entry);
 
     // A send that never echoes must not leave its claim behind, or the next

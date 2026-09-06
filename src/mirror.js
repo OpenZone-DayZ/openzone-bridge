@@ -60,7 +60,7 @@ export async function fillMirror({ store, discord, kind, log = console }) {
 
     for (const m of lines) {
       try {
-        await discord.say(threadId, m.who || '?', m.text || '', m.uid ?? null);
+        await discord.say(threadId, m.who || '?', m.text || '', m.uid ?? null, m.id);
         store.setInDiscord(c.key, m.id, true);
         report.pushed++;
       } catch (err) {

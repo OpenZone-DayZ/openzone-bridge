@@ -16,7 +16,7 @@ import { join, dirname } from 'node:path';
 
 import 'dotenv/config';
 import { byteClip } from './clip.js';
-import { Store } from './store.js';
+import { Store, snowflake } from './store.js';
 import { openPage, olderFromStore, toLine } from './history.js';
 import { fillMirror } from './mirror.js';
 import { DiscordSide } from './discord.js';
@@ -225,30 +225,41 @@ const markStale = (m) => typeof m.text === 'string' && m.text.startsWith('[MARK]
 const selfGranted = new Set();
 async function sweepMarks() {
   for (const gone of store.expiredMarks(Date.now() - MARK_TTL_MS, parseAt)) {
-    try {
-      if (gone.threadId) await discord.deleteMessage(gone.threadId, gone.id);
-      store.dropMessage(gone.key, gone.id);
-    } catch (err) {
-      // Unknown Message: someone beat us to it -- the store record is all
-      // that is left, so drop it. Missing Permissions: the bot cannot
-      // delete webhook posts without Manage Messages -- try to grant
-      // itself a channel overwrite once (it owns these channels), and if
-      // Discord refuses that too, the guild owner has to tick the box.
-      if (err?.code === 10008) store.dropMessage(gone.key, gone.id);
-      else if (err?.code === 50013 && !selfGranted.has(gone.threadId)) {
-        selfGranted.add(gone.threadId);
-        try {
-          const ch = await discord.client.channels.fetch(gone.threadId);
-          const target = ch.isThread() ? ch.parent : ch;
-          await target.permissionOverwrites.edit(discord.client.user.id, { ManageMessages: true });
-          console.log(`[marks] granted itself Manage Messages in #${target.name}`);
-        } catch (e2) {
-          console.warn(`[marks] cannot self-grant Manage Messages (${e2.message}); ask the guild owner to enable it for the bot role`);
+    // THE STORE ROW GOES EITHER WAY, and Discord is best effort.
+    //
+    // This used to hand Discord the bridge's OWN id for the message -- the
+    // only id a line the game sent ever had here -- so the delete failed,
+    // the row was never dropped, and the same mark was retried and logged
+    // every thirty seconds for as long as the bridge ran. Now the delete
+    // only happens when the echo told us which Discord message it became,
+    // and the courier leaves the store regardless.
+    if (gone.threadId && gone.discordId) {
+      try {
+        await discord.deleteMessage(gone.threadId, gone.discordId);
+      } catch (err) {
+        // Missing Permissions: the bot cannot delete webhook posts without
+        // Manage Messages -- try to grant itself a channel overwrite once
+        // (it owns these channels) and leave this mark for the next sweep,
+        // which then has the permission. If Discord refuses that too, the
+        // guild owner has to tick the box.
+        if (err?.code === 50013 && !selfGranted.has(gone.threadId)) {
+          selfGranted.add(gone.threadId);
+          try {
+            const ch = await discord.client.channels.fetch(gone.threadId);
+            const target = ch.isThread() ? ch.parent : ch;
+            await target.permissionOverwrites.edit(discord.client.user.id, { ManageMessages: true });
+            console.log(`[marks] granted itself Manage Messages in #${target.name}`);
+            continue;
+          } catch (e2) {
+            console.warn(`[marks] cannot self-grant Manage Messages (${e2.message}); ask the guild owner to enable it for the bot role`);
+          }
+        } else if (err?.code !== 10008 && err?.code !== 50013) {
+          // 10008 Unknown Message: somebody beat us to it, which is fine.
+          console.warn(`[marks] ttl delete failed: ${err.message}`);
         }
-      } else if (err?.code !== 50013) {
-        console.warn(`[marks] ttl delete failed: ${err.message}`);
       }
     }
+    store.dropMessage(gone.key, gone.id);
   }
 }
 setInterval(() => sweepMarks().catch((e) => console.warn(`[marks] sweep: ${e.message}`)), 30000);
@@ -262,6 +273,20 @@ setInterval(() => {
     console.warn(`[chat] invite sweep: ${e.message}`);
   }
 }, 60000);
+
+// WHAT DISCORD CAN BE ASKED ABOUT, and it is never our own id.
+//
+// A line the game sent is stored under "o<ms><seq>" (R6.4); Discord cannot
+// resolve that, so every attempt to page deeper than our tail failed silently
+// for any conversation whose oldest stored line came from the game -- which is
+// the ordinary case. The echo now writes the snowflake down (discord.js), and
+// this is where it is read back. Empty means "we cannot ask", which is an
+// honest "no more" rather than a broken request.
+function anchorOf(key, id) {
+  if (!id) return '';
+  const m = store.messageOf(key, id);
+  return String(m?.dId || '') || snowflake(id);
+}
 
 async function pairFreeze(a, b, frozen) {
   if (!a || !b) return { Error: 'no_chat' };
@@ -338,14 +363,17 @@ const routes = {
     // stays a fact for a conversation older than our memory (R-D2.4).
     const page = openPage({ store, key, uid, limit, until, parseAt });
     let more = page.more;
-    if (!more && c.threadId) {
+    const anchor = anchorOf(key, page.before);
+    if (!more && c.threadId && anchor) {
       try {
-        more = await discord.hasOlder(c.threadId, page.oldest);
+        more = await discord.hasOlder(c.threadId, anchor);
       } catch (err) {
         console.warn(`[chat] hasOlder failed: ${err.message}`);
       }
     }
-    const shown = page.lines;
+    // A courier past its five minutes is not shown, whatever the sweep has
+    // got round to (TZ-4 R-D6.1).
+    const shown = page.lines.filter((l) => !markStale({ text: l.Text, at: l.At }));
 
     return {
       Id: key,
@@ -380,9 +408,10 @@ const routes = {
     const fromStore = olderFromStore({ store, key, uid, before, limit: page, until, parseAt });
     if (fromStore) {
       let more = fromStore.more;
-      if (!more && fromStore.atStoreEdge && c.threadId) {
+      const anchor = anchorOf(key, fromStore.before);
+      if (!more && fromStore.atStoreEdge && c.threadId && anchor) {
         try {
-          more = await discord.hasOlder(c.threadId, fromStore.oldest);
+          more = await discord.hasOlder(c.threadId, anchor);
         } catch (err) {
           console.warn(`[chat] hasOlder failed: ${err.message}`);
         }
@@ -396,11 +425,14 @@ const routes = {
     }
 
     // 2) the thread itself
-    if (!c.threadId) return { Id: key, More: false, Before: before || '', Lines: [] };
+    const anchor = anchorOf(key, before);
+    // No thread, or an anchor Discord cannot resolve: this is the bottom of
+    // what anybody can show, and saying so beats a request that fails.
+    if (!c.threadId || (before && !anchor)) return { Id: key, More: false, Before: before || '', Lines: [] };
     try {
       // One more than the page: the extra line, if it exists, is the fact
       // behind "more" (R-D2.4) and is not shown.
-      let lines = await discord.fetchOlder(c.threadId, before, page + 1);
+      let lines = await discord.fetchOlder(c.threadId, anchor, page + 1);
       const deeper = lines.length > page;
       if (deeper) lines = lines.slice(lines.length - page);
 
@@ -410,7 +442,13 @@ const routes = {
       // line that has not aged out yet -- the ones Discord itself cannot
       // attribute, because a webhook post carries no author but a name.
       const known = new Map();
-      for (const m of store.messagesOf(key, 1000)) if (m.uid) known.set(m.id, m.uid);
+      for (const m of store.messagesOf(key, 1000)) {
+        if (!m.uid) continue;
+        known.set(m.id, m.uid);
+        // A line the game sent wears our id here and Discord's over there;
+        // the echo wrote down which is which, so it can be recovered too.
+        if (m.dId) known.set(m.dId, m.uid);
+      }
       for (const m of lines) if (!m.uid && known.has(m.id)) m.uid = known.get(m.id);
       // The anchor id already sits below the freeze stamp, so Discord pages
       // are pre-freeze by construction -- the filter only guards the edge
@@ -578,7 +616,7 @@ const routes = {
 
     if (npcMirrored) {
       try {
-        await discord.say(c.threadId, npcName || npcId, byteClip(text), null);
+        await discord.say(c.threadId, npcName || npcId, byteClip(text), null, line?.id);
       } catch (err) {
         if (line) store.setInDiscord(key, line.id, false);
         console.warn(`[npc] stored but not mirrored: ${err.message}`);
@@ -757,7 +795,7 @@ const routes = {
     // conversation and every other member will read it.
     if (alsoInDiscord) {
       try {
-        await discord.say(c.threadId, who, text, author);
+        await discord.say(c.threadId, who, text, author, stored?.id);
       } catch (err) {
         // The guild refused, so the line is NOT there -- say so in the
         // record, or the store would later drop it believing Discord has a
