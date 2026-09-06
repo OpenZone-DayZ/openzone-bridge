@@ -1,10 +1,10 @@
 // TZ-6: who may sign a news post with which name.
 //
 // This rule was read backwards once and implemented as "one fixed voice per
-// organisation, the leader may not choose" (TZ-6 §1a). The owner's answer:
-//
-//   несколько у одной ГП, лидер ГП может выбирать от чьего имени отправлять,
-//   но сами персоны назначаются админами
+// organisation, the leader may not choose" (TZ-6 §1a). The owner's answer,
+// translated: one organisation may hold several personas, its leader chooses
+// which of them signs a post, and the personas themselves are assigned by
+// admins.
 //
 // So the line runs between WHICH NAMES WE HAVE -- an admin's act, a grant --
 // and WHICH ONE SIGNS THIS POST, which is the leader's. These assertions

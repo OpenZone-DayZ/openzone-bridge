@@ -6,9 +6,9 @@
 // what the private notebook could not be.
 //
 // WHERE NEWS LIVE: in the bot's own store. Discord is where they are
-// WRITTEN and a surface they also appear on -- owner's decision 2026-09-01,
-// "пусть бот держит и новости у себя в базе, а дискорд -- только миррор",
-// which is TZ-2 R1.1 for this kind.
+// WRITTEN and a surface they also appear on -- owner's decision 2026-09-01:
+// the bot keeps the news in its own base and Discord is only a mirror of
+// them, which is TZ-2 R1.1 for this kind.
 //
 // This used to say "Discord is the truth and the ONLY writer", and the index
 // lived in MEMORY only, rebuilt from Discord on every start. The cost of that
