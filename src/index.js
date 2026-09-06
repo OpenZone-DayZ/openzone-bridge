@@ -17,7 +17,7 @@ import { join, dirname } from 'node:path';
 import 'dotenv/config';
 import { byteClip } from './clip.js';
 import { Store, snowflake } from './store.js';
-import { openPage, olderFromStore, toLine } from './history.js';
+import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './history.js';
 import { fillMirror } from './mirror.js';
 import { DiscordSide } from './discord.js';
 import { HttpSide } from './http.js';
@@ -369,9 +369,10 @@ const routes = {
       .filter((c) => !until || c.kind === 'zone' || !c.createdAt || parseAt(c.createdAt) <= until)
       .sort((a, b) => (a.kind === 'zone' ? -1 : 0) - (b.kind === 'zone' ? -1 : 0))
       .map((c) => {
-      const tail = until
-        ? [...store.messagesOf(c.key, 1000)].reverse().find((m) => parseAt(m.at) <= until)
-        : store.messagesOf(c.key, 1)[0];
+      // One indexed row per conversation, freeze stamp included. This used
+      // to read and parse up to a thousand lines of every conversation the
+      // player is in, on every list, to show the last one.
+      const tail = store.tailOf(c.key, 1, untilStamp(until))[0];
       return {
         Id: c.key,
         Kind: c.kind,
@@ -402,7 +403,7 @@ const routes = {
     // tail. When the store's whole tail fits on this page, Discord is asked
     // once whether anything lies deeper -- that is the only way the flag
     // stays a fact for a conversation older than our memory (R-D2.4).
-    const page = openPage({ store, key, uid, limit, until, parseAt });
+    const page = openPage({ store, key, uid, limit, until });
     let more = page.more;
     const anchor = anchorOf(key, page.before);
     if (!more && c.threadId && anchor) {
@@ -446,7 +447,7 @@ const routes = {
     // 1) the store first: the page of lines before the current top
     // (TZ-4 R-D2.2). Whether more exist is read, not guessed; at the
     // store's edge Discord is asked, because it alone remembers deeper.
-    const fromStore = olderFromStore({ store, key, uid, before, limit: page, until, parseAt });
+    const fromStore = olderFromStore({ store, key, uid, before, limit: page, until });
     if (fromStore) {
       let more = fromStore.more;
       const anchor = anchorOf(key, fromStore.before);
@@ -482,15 +483,7 @@ const routes = {
       // from the tail costs one map lookup and recovers every game-relayed
       // line that has not aged out yet -- the ones Discord itself cannot
       // attribute, because a webhook post carries no author but a name.
-      const known = new Map();
-      for (const m of store.messagesOf(key, 1000)) {
-        if (!m.uid) continue;
-        known.set(m.id, m.uid);
-        // A line the game sent wears our id here and Discord's over there;
-        // the echo wrote down which is which, so it can be recovered too.
-        if (m.dId) known.set(m.dId, m.uid);
-      }
-      for (const m of lines) if (!m.uid && known.has(m.id)) m.uid = known.get(m.id);
+      fillFromTail(lines, store.tailOf(key, 200));
       // The anchor id already sits below the freeze stamp, so Discord pages
       // are pre-freeze by construction -- the filter only guards the edge
       // where the anchor itself was the oldest stored line.

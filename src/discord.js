@@ -1295,9 +1295,24 @@ export class DiscordSide {
   // of a fetch: the fact behind the "load older" button (TZ-4 R-D2.4).
   async hasOlder(threadId, beforeId) {
     if (!beforeId) return false;
+
+    // The answer for one (thread, message) pair does not change: Discord ids
+    // are time-ordered, so nothing can appear before a line that is already
+    // there. Opening a short conversation asked this over REST every single
+    // time, against the same 50/s budget the chat itself spends.
+    const key = threadId + '|' + beforeId;
+    this.olderKnown ??= new Map();
+    if (this.olderKnown.has(key)) return this.olderKnown.get(key);
+
     const th = await this.client.channels.fetch(threadId);
     const batch = await th.messages.fetch({ limit: 1, before: beforeId });
-    return batch.size > 0;
+    const answer = batch.size > 0;
+
+    // A plain cap, not an LRU: this is a memo, and forgetting all of it
+    // costs one REST call per conversation that is still being read.
+    if (this.olderKnown.size > 2000) this.olderKnown.clear();
+    this.olderKnown.set(key, answer);
+    return answer;
   }
 
   async fetchOlder(threadId, beforeId, limit) {

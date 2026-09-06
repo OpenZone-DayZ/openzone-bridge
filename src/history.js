@@ -6,48 +6,70 @@
 // the N before a given line, and "there is more" is a FACT read from the
 // store rather than a guess about the tail being full.
 //
+// THE PAGE IS CUT IN SQL. Both of these used to load the WHOLE conversation
+// -- every line, JSON.parsed -- to show twenty of them and then throw the
+// rest away. With the mirror off a tail grows without limit, so opening one
+// chat could parse thousands of records; the (key, cursor) index has always
+// been there for exactly this.
+//
 // Pure functions over the store so a test can drive them without Discord;
 // the Discord tier (lines deeper than the store remembers) stays in the
 // route, because only the route has a client.
 
-export function openPage({ store, key, uid, limit, until, parseAt }) {
-  const page = Math.min(Math.max(Number(limit) || 20, 1), 100);
-  let all = store.messagesOf(key);
-  if (until) all = all.filter((m) => parseAt(m.at) <= until);
+// The freeze stamp of a sealed capsule, in the store's own dialect. The
+// store compares it against the `at` column; both are UTC.
+export function untilStamp(until) {
+  const ms = Number(until) || 0;
+  return ms > 0 ? new Date(ms).toISOString().slice(0, 19).replace('T', ' ') : '';
+}
 
-  const shown = all.slice(Math.max(all.length - page, 0));
+const pageSize = (limit) => Math.min(Math.max(Number(limit) || 20, 1), 100);
+
+export function openPage({ store, key, uid, limit, until }) {
+  const stamp = untilStamp(until);
+  const shown = store.tailOf(key, pageSize(limit), stamp);
   return {
     lines: shown.map((m) => toLine(m, uid)),
     // More lines exist in the store before the ones shown: a fact.
-    more: all.length > shown.length,
+    more: shown.length > 0 && store.hasBefore(key, shown[0].id, stamp),
     before: shown[0]?.id || '',
-    oldest: shown[0]?.id || '',
   };
 }
 
 // The page BEFORE `before`, from the store. Null when the store holds
 // nothing older than that line -- the caller then asks Discord, which is
 // the only party that remembers past the tail.
-export function olderFromStore({ store, key, uid, before, limit, until, parseAt }) {
-  const page = Math.min(Math.max(Number(limit) || 20, 1), 100);
-  let all = store.messagesOf(key);
-  if (until) all = all.filter((m) => parseAt(m.at) <= until);
+export function olderFromStore({ store, key, uid, before, limit, until }) {
+  if (!before) return null;
+  const stamp = untilStamp(until);
+  const chunk = store.beforeOf(key, before, pageSize(limit), stamp);
+  if (!chunk.length) return null;
 
-  const at = before ? all.findIndex((m) => m.id === before) : -1;
-  if (at <= 0) return null;
-
-  const older = all.slice(0, at);
-  const chunk = older.slice(Math.max(older.length - page, 0));
+  const more = store.hasBefore(key, chunk[0].id, stamp);
   return {
     lines: chunk.map((m) => toLine(m, uid)),
-    more: older.length > chunk.length,
-    before: chunk[0]?.id || before,
-    oldest: chunk[0]?.id || before,
+    more,
+    before: chunk[0].id,
     // Whether the store's edge was reached with this page: when the chunk
     // starts at the very first stored line, whatever lies deeper is in
     // Discord and the route has to ask there before saying "no more".
-    atStoreEdge: older.length <= chunk.length,
+    atStoreEdge: !more,
   };
+}
+
+// Who said the lines Discord could not attribute. A webhook post carries no
+// author but a name, and the store still knows the author of anything inside
+// its tail -- by our own id for a line the game sent, and by the Discord
+// snowflake the echo wrote down for the same line over there.
+export function fillFromTail(lines, tail) {
+  const known = new Map();
+  for (const m of tail) {
+    if (!m.uid) continue;
+    known.set(m.id, m.uid);
+    if (m.dId) known.set(m.dId, m.uid);
+  }
+  for (const m of lines) if (!m.uid && known.has(m.id)) m.uid = known.get(m.id);
+  return lines;
 }
 
 export function toLine(m, uid) {
