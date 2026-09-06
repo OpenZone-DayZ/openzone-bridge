@@ -61,12 +61,8 @@ ok('an unknown id still refuses',
 // A second process over the same file sees the same feed -- that is what
 // "home" means, as opposed to a cache that dies with the process.
 //
-// save() explicitly: writes go through saveSoon(), which debounces for one
-// second. The debounce is the store's, not this feature's -- chat has always
-// been written the same way -- but it is worth stating that a crash inside
-// that window loses the newest records, which is one of the three things
-// TZ-2 R6.1 wants a real database for.
-store.save();
+// No flush step: a write is on disk by the time the store's method returns,
+// which is one of the three things TZ-2 R6.1 wanted a real database for.
 const again = new News(new Store(path, 100));
 ok('the feed survives a restart with Discord unreachable',
   again.list().Items.map((p) => p.Title), ['newer', 'older']);
@@ -75,7 +71,6 @@ ok('the feed survives a restart with Discord unreachable',
 // Discord and stay there, so an evicted post is still where it was written.
 store.newsPut(post('3', 'third', 3000));
 store.newsTrim(2);
-store.save();
 ok('trimming drops the oldest and keeps the cap',
   new News(new Store(path, 100)).list().Items.map((p) => p.Title), ['third', 'newer']);
 

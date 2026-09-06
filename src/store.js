@@ -8,9 +8,6 @@
 // 1в) the last one stopped being a nicety: a line sent with the mirror off
 // exists in this file and nowhere else in the world.
 //
-// The shape of the API is unchanged on purpose: every caller keeps working,
-// and save()/saveSoon() are kept as no-ops so a caller written for the JSON
-// store neither breaks nor learns anything it does not need to know.
 //
 // node:sqlite, not a native module: it ships with Node 24 and there is nothing
 // to compile on the host. Synchronous, like the JSON store was -- the bridge
@@ -45,11 +42,16 @@ const SCHEMA = [
      steam_id TEXT PRIMARY KEY,
      name     TEXT NOT NULL
    )`,
-  // conversation key -> the conversation record, opaque to the store
+  // conversation key -> the conversation record, opaque to the store apart
+  // from thread_id: the Discord thread is looked up on EVERY message in the
+  // guild, and a column with an index answers that without reading the table.
   `CREATE TABLE IF NOT EXISTS convos (
-     key  TEXT PRIMARY KEY,
-     json TEXT NOT NULL
+     key       TEXT PRIMARY KEY,
+     json      TEXT NOT NULL,
+     thread_id TEXT NOT NULL DEFAULT ''
    )`,
+  // convos_thread is created by #upgrade, not here: a database from before
+  // the column has no thread_id yet when this list runs.
   `CREATE TABLE IF NOT EXISTS invites (
      key      TEXT NOT NULL,
      uid      TEXT NOT NULL,
@@ -76,6 +78,10 @@ const SCHEMA = [
    )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS messages_key_id ON messages(key, id)`,
   `CREATE INDEX IF NOT EXISTS messages_key_cursor ON messages(key, cursor)`,
+  // Shared map marks, and nothing else. The TTL sweep runs every 30 s and
+  // asks the same question every time; a PARTIAL index means an empty answer
+  // costs an index probe instead of a scan of every chat line ever sent.
+  `CREATE INDEX IF NOT EXISTS messages_marks ON messages(key, id) WHERE substr(text, 1, 7) = '[MARK] '`,
   // furniture the bot created in the guild and has to find again
   `CREATE TABLE IF NOT EXISTS guild (
      key TEXT PRIMARY KEY,
@@ -153,11 +159,14 @@ export class Store {
     this.db = new DatabaseSync(path);
 
     // WAL: readers never block the writer and a crash mid-write leaves the
-    // last committed state, not a torn file. synchronous=FULL because the
-    // volume is a chat line a second at most and the cost of losing one is
-    // named above.
+    // last committed state, not a torn file.
     this.db.exec('PRAGMA journal_mode = WAL');
-    this.db.exec('PRAGMA synchronous = FULL');
+    // NORMAL, not FULL. Under WAL a crashing PROCESS loses nothing either
+    // way -- the difference is a power cut, which may cost the last commits.
+    // FULL bought that at two or three fsyncs per chat line, on the same disk
+    // the game server writes to; the line is also in Discord whenever the
+    // mirror is on. Set it back to FULL if the host has no UPS.
+    this.db.exec('PRAGMA synchronous = NORMAL');
     this.db.exec('PRAGMA foreign_keys = ON');
     for (const ddl of SCHEMA) this.db.exec(ddl);
     this.#upgrade();
@@ -172,11 +181,6 @@ export class Store {
     this.db.close();
   }
 
-  // Kept for callers written against the JSON store. Every change here is
-  // already on disk by the time the method that made it returns.
-  save() {}
-  saveSoon() {}
-
   // ---- plumbing ----
 
   // Columns added after the first schema. CREATE TABLE IF NOT EXISTS leaves
@@ -188,6 +192,21 @@ export class Store {
       // expires" -- every invite written before this column existed.
       this.db.exec("ALTER TABLE invites ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''");
     }
+
+    // The thread index. Rows written before the column existed carry the id
+    // inside their json and nowhere else, so it is lifted out once.
+    const ccols = this.db.prepare('PRAGMA table_info(convos)').all().map((c) => c.name);
+    if (!ccols.includes('thread_id')) {
+      this.db.exec("ALTER TABLE convos ADD COLUMN thread_id TEXT NOT NULL DEFAULT ''");
+      const rows = this.db.prepare('SELECT key, json FROM convos').all();
+      const set = this.db.prepare('UPDATE convos SET thread_id = ? WHERE key = ?');
+      for (const r of rows) {
+        let id = '';
+        try { id = String(JSON.parse(r.json).threadId || ''); } catch { id = ''; }
+        if (id) set.run(id, r.key);
+      }
+    }
+    this.db.exec('CREATE INDEX IF NOT EXISTS convos_thread ON convos(thread_id)');
   }
 
   #prepare() {
@@ -206,13 +225,18 @@ export class Store {
       linkByDiscord: q('SELECT steam_id FROM links WHERE discord_id = ? ORDER BY linked_at DESC LIMIT 1'),
       linkAll: q('SELECT steam_id, discord_id FROM links ORDER BY linked_at'),
 
-      nameSet: q('INSERT INTO names(steam_id, name) VALUES (?, ?) ON CONFLICT(steam_id) DO UPDATE SET name = excluded.name'),
+      // WHERE name <> excluded.name: every chat line asserts the sender's
+      // name, and an unconditional upsert wrote (and fsynced) a row that was
+      // already right.
+      nameSet: q('INSERT INTO names(steam_id, name) VALUES (?, ?) ON CONFLICT(steam_id) DO UPDATE SET name = excluded.name WHERE name <> excluded.name'),
       nameGet: q('SELECT name FROM names WHERE steam_id = ?'),
+      nameDel: q('DELETE FROM names WHERE steam_id = ?'),
 
       convoGet: q('SELECT json FROM convos WHERE key = ?'),
-      convoSet: q('INSERT INTO convos(key, json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET json = excluded.json'),
+      convoSet: q('INSERT INTO convos(key, json, thread_id) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET json = excluded.json, thread_id = excluded.thread_id'),
       convoDel: q('DELETE FROM convos WHERE key = ?'),
       convoAll: q('SELECT key, json FROM convos ORDER BY key'),
+      convoByThread: q('SELECT key, json FROM convos WHERE thread_id = ? LIMIT 1'),
 
       invSet: q('INSERT INTO invites(key, uid, from_uid, at, expires_at) VALUES (?, ?, ?, ?, ?) ' +
                 'ON CONFLICT(key, uid) DO UPDATE SET from_uid = excluded.from_uid, at = excluded.at, expires_at = excluded.expires_at'),
@@ -239,11 +263,27 @@ export class Store {
       msgTailDesc: q('SELECT json FROM messages WHERE key = ? ORDER BY cursor DESC LIMIT ?'),
       msgAllAsc: q('SELECT json FROM messages WHERE key = ? ORDER BY cursor'),
       msgSince: q('SELECT key, json FROM messages WHERE cursor > ? ORDER BY cursor'),
-      msgMarks: q("SELECT key, id, at, text FROM messages WHERE text LIKE '[MARK] %'"),
+      // The mark sweep, on the partial index: the WHERE clause is spelled
+      // exactly as the index's own so SQLite can use it.
+      msgMarks: q("SELECT key, id, at, json FROM messages WHERE substr(text, 1, 7) = '[MARK] '"),
+      msgOne: q('SELECT json FROM messages WHERE key = ? AND id = ?'),
+      msgCursorOf: q('SELECT cursor FROM messages WHERE key = ? AND id = ?'),
+      msgSetJson: q('UPDATE messages SET in_discord = ?, json = ? WHERE key = ? AND id = ?'),
+
+      // ---- history pages, done in SQL (TZ-4 R-D2.1..R-D2.4) ----
+      //
+      // A page used to be sliced out of the whole conversation loaded and
+      // JSON.parsed in memory. `until` is the capsule's freeze stamp; the
+      // index holds two stamp dialects, so the column is normalised to
+      // "YYYY-MM-DD HH:MM:SS" (both are UTC) before the comparison.
+      msgTailUntil: q("SELECT json FROM messages WHERE key = ? AND replace(substr(at, 1, 19), 'T', ' ') <= ? ORDER BY cursor DESC LIMIT ?"),
+      msgBefore: q('SELECT json FROM messages WHERE key = ? AND cursor < ? ORDER BY cursor DESC LIMIT ?'),
+      msgBeforeUntil: q("SELECT json FROM messages WHERE key = ? AND cursor < ? AND replace(substr(at, 1, 19), 'T', ' ') <= ? ORDER BY cursor DESC LIMIT ?"),
+      msgAnyBefore: q('SELECT 1 FROM messages WHERE key = ? AND cursor < ? LIMIT 1'),
+      msgAnyBeforeUntil: q("SELECT 1 FROM messages WHERE key = ? AND cursor < ? AND replace(substr(at, 1, 19), 'T', ' ') <= ? LIMIT 1"),
 
       // ---- roles home ----
       facAll: q('SELECT slug, label, color, base, limit_n, role_id, missing, ord FROM factions ORDER BY ord, rowid'),
-      facGet: q('SELECT slug, label, color, base, limit_n, role_id, missing, ord FROM factions WHERE slug = ?'),
       facSet: q('INSERT INTO factions(slug, label, color, base, limit_n, role_id, missing, ord) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ' +
                 'ON CONFLICT(slug) DO UPDATE SET label = excluded.label, color = excluded.color, base = excluded.base, limit_n = excluded.limit_n, role_id = excluded.role_id, missing = excluded.missing, ord = excluded.ord'),
       facDel: q('DELETE FROM factions WHERE slug = ?'),
@@ -265,17 +305,14 @@ export class Store {
       rankAll: q('SELECT slug, label, ord, role_id, missing FROM ranks ORDER BY ord, rowid'),
       rankSet: q('INSERT INTO ranks(slug, label, ord, role_id, missing) VALUES (?, ?, ?, ?, ?) ' +
                  'ON CONFLICT(slug) DO UPDATE SET label = excluded.label, ord = excluded.ord, role_id = excluded.role_id, missing = excluded.missing'),
-      rankDel: q('DELETE FROM ranks WHERE slug = ?'),
 
       traitAll: q('SELECT slug, label, role_id, missing FROM traits ORDER BY rowid'),
       traitSet: q('INSERT INTO traits(slug, label, role_id, missing) VALUES (?, ?, ?, ?) ' +
                   'ON CONFLICT(slug) DO UPDATE SET label = excluded.label, role_id = excluded.role_id, missing = excluded.missing'),
-      traitDel: q('DELETE FROM traits WHERE slug = ?'),
 
       memGet: q('SELECT steam_id, org, frank, rank, posts, traits, updated_at FROM members WHERE steam_id = ?'),
       memSet: q('INSERT INTO members(steam_id, org, frank, rank, posts, traits, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
                 'ON CONFLICT(steam_id) DO UPDATE SET org = excluded.org, frank = excluded.frank, rank = excluded.rank, posts = excluded.posts, traits = excluded.traits, updated_at = excluded.updated_at'),
-      memDel: q('DELETE FROM members WHERE steam_id = ?'),
       memAll: q('SELECT steam_id, org, frank, rank, posts, traits, updated_at FROM members ORDER BY steam_id'),
       memOfOrg: q('SELECT steam_id, org, frank, rank, posts, traits, updated_at FROM members WHERE org = ? ORDER BY updated_at, steam_id'),
       memCountOrg: q('SELECT COUNT(*) AS n FROM members WHERE org = ?'),
@@ -368,11 +405,6 @@ export class Store {
     return this.q.facAll.all().map(rowFaction);
   }
 
-  factionGet(slug) {
-    const row = this.q.facGet.get(slug);
-    return row ? rowFaction(row) : null;
-  }
-
   factionSet(f) {
     let ord = f.ord;
     if (!(ord > 0)) ord = (this.q.facMaxOrd.get().n || 0) + 1;
@@ -421,20 +453,12 @@ export class Store {
     this.q.rankSet.run(r.slug, r.label, Math.floor(Number(r.ord) || 0), r.roleId || '', r.missing ? 1 : 0);
   }
 
-  rankDel(slug) {
-    this.q.rankDel.run(slug);
-  }
-
   traitsAll() {
     return this.q.traitAll.all().map((r) => ({ slug: r.slug, label: r.label, roleId: r.role_id, missing: !!r.missing }));
   }
 
   traitSet(t) {
     this.q.traitSet.run(t.slug, t.label, t.roleId || '', t.missing ? 1 : 0);
-  }
-
-  traitDel(slug) {
-    this.q.traitDel.run(slug);
   }
 
   memberGet(steamId) {
@@ -452,10 +476,6 @@ export class Store {
       JSON.stringify(Array.isArray(m.traits) ? m.traits : []),
       new Date().toISOString(),
     );
-  }
-
-  memberDel(steamId) {
-    this.q.memDel.run(steamId);
   }
 
   membersAll() {
@@ -498,6 +518,12 @@ export class Store {
     return row ? row.name : '';
   }
 
+  // Only a test cleaning up after itself has any business here: the bridge
+  // never forgets a name on its own.
+  forgetName(steamId) {
+    return this.q.nameDel.run(steamId).changes > 0;
+  }
+
   // ---- conversations ----
 
   // A direct conversation key is DERIVED from the two CHARACTER keys
@@ -507,10 +533,6 @@ export class Store {
   // becomes next.
   static directKey(a, b) {
     return a < b ? `d:${a}:${b}` : `d:${b}:${a}`;
-  }
-
-  allConvoKeys() {
-    return this.q.convoAll.all().map((r) => r.key);
   }
 
   // Every conversation with its key folded in: what callers used to get by
@@ -525,7 +547,10 @@ export class Store {
   }
 
   putConvo(key, convo) {
-    this.q.convoSet.run(key, JSON.stringify(convo));
+    // The thread id is written twice on purpose: inside the record, which is
+    // what every caller reads, and into its own column, which is what the
+    // guild's message handler searches by.
+    this.q.convoSet.run(key, JSON.stringify(convo), String(convo?.threadId || ''));
   }
 
   // The conversation and every line in it, in one transaction: a convo
@@ -549,11 +574,12 @@ export class Store {
     return this.convosAll().filter((c) => Store.memberOf(c, steamId));
   }
 
+  // Asked on EVERY message in the guild, ours or not: one index probe, and
+  // nothing is parsed unless a conversation actually lives in that thread.
   convoByThread(threadId) {
-    for (const c of this.convosAll()) {
-      if (c.threadId === threadId) return c;
-    }
-    return null;
+    if (!threadId) return null;
+    const row = this.q.convoByThread.get(String(threadId));
+    return row ? { key: row.key, ...JSON.parse(row.json) } : null;
   }
 
   // ---- group invites ----
@@ -652,16 +678,30 @@ export class Store {
   // store got this for free by mutating the shared object; here it is a
   // write, and callers say so explicitly.
   setInDiscord(key, id, flag) {
-    const row = this.db.prepare('SELECT json FROM messages WHERE key = ? AND id = ?').get(key, String(id));
-    if (!row) return false;
-    const m = JSON.parse(row.json);
+    const m = this.messageOf(key, id);
+    if (!m) return false;
     m.inDiscord = !!flag;
-    return this.db.prepare('UPDATE messages SET in_discord = ?, json = ? WHERE key = ? AND id = ?')
-      .run(flag ? 1 : 0, JSON.stringify(m), key, String(id)).changes > 0;
+    return this.q.msgSetJson.run(flag ? 1 : 0, JSON.stringify(m), key, String(id)).changes > 0;
   }
 
-  markInDiscord(key, id) {
-    return this.setInDiscord(key, id, true);
+  // WHICH DISCORD MESSAGE THIS LINE IS, once its echo comes back.
+  //
+  // A line the game sent is stored under OUR id (TZ-2 R6.4) and Discord's
+  // snowflake was thrown away with the echo. Everything that later has to
+  // address the same line IN DISCORD -- the mark TTL sweep's delete, the
+  // `before` anchor of a history page -- had nothing but our id to offer,
+  // and Discord cannot resolve it.
+  noteDiscordId(key, id, discordId) {
+    if (!discordId) return false;
+    const m = this.messageOf(key, id);
+    if (!m || m.dId === String(discordId)) return false;
+    m.dId = String(discordId);
+    return this.q.msgSetJson.run(m.inDiscord === false ? 0 : 1, JSON.stringify(m), key, String(id)).changes > 0;
+  }
+
+  messageOf(key, id) {
+    const row = this.q.msgOne.get(key, String(id));
+    return row ? JSON.parse(row.json) : null;
   }
 
   // WE MAY ONLY DROP WHAT ALSO EXISTS SOMEWHERE ELSE.
@@ -700,12 +740,17 @@ export class Store {
   // Discord first and then drops it here.
   expiredMarks(cutoffMs, parseAt) {
     const out = [];
+    // The threads of the conversations that turned out to HAVE a stale mark,
+    // and no others: the sweep used to read and parse the whole conversation
+    // table to build a map it then hardly used.
     const threads = new Map();
-    for (const c of this.convosAll()) threads.set(c.key, c.threadId);
     for (const r of this.q.msgMarks.all()) {
-      if (!threads.has(r.key)) continue;
       const t = parseAt(r.at);
-      if (t > 0 && t < cutoffMs) out.push({ key: r.key, threadId: threads.get(r.key), id: r.id });
+      if (!(t > 0 && t < cutoffMs)) continue;
+      if (!threads.has(r.key)) threads.set(r.key, this.convo(r.key)?.threadId || '');
+      let dId = '';
+      try { dId = String(JSON.parse(r.json).dId || ''); } catch { dId = ''; }
+      out.push({ key: r.key, threadId: threads.get(r.key), id: r.id, discordId: dId || snowflake(r.id) });
     }
     return out;
   }
@@ -719,15 +764,45 @@ export class Store {
     return this.q.msgAllAsc.all(key).map((r) => JSON.parse(r.json));
   }
 
-  // Everything newer than `cursor` that `steamId` is allowed to see.
-  since(steamId, cursor) {
-    const allowed = new Set(this.convosOf(steamId).map((c) => c.key));
-    const out = [];
-    for (const r of this.q.msgSince.all(Number(cursor) || 0)) {
-      if (!allowed.has(r.key)) continue;
-      out.push({ key: r.key, ...JSON.parse(r.json) });
-    }
-    return out;
+  // ---- pages of a conversation, oldest-first ----
+  //
+  // `until` is the capsule's freeze stamp as "YYYY-MM-DD HH:MM:SS", or ''
+  // for the live view. The window and the limit both belong in the query:
+  // a page is a handful of lines and the tail behind it can be thousands.
+
+  tailOf(key, limit, until = '') {
+    const rows = until
+      ? this.q.msgTailUntil.all(key, until, limit)
+      : this.q.msgTailDesc.all(key, limit);
+    return rows.map((r) => JSON.parse(r.json)).reverse();
+  }
+
+  beforeOf(key, id, limit, until = '') {
+    const at = this.cursorOf(key, id);
+    if (at === null) return [];
+    const rows = until
+      ? this.q.msgBeforeUntil.all(key, at, until, limit)
+      : this.q.msgBefore.all(key, at, limit);
+    return rows.map((r) => JSON.parse(r.json)).reverse();
+  }
+
+  hasBefore(key, id, until = '') {
+    const at = this.cursorOf(key, id);
+    if (at === null) return false;
+    return !!(until ? this.q.msgAnyBeforeUntil.get(key, at, until) : this.q.msgAnyBefore.get(key, at));
+  }
+
+  cursorOf(key, id) {
+    const row = this.q.msgCursorOf.get(key, String(id));
+    return row ? row.cursor : null;
+  }
+
+  // Everything newer than `cursor`, for everybody: WHO may see which line is
+  // decided once per conversation by the drain, not once per player here.
+  // This used to be since(uid, cursor) -- the same full scan and the same
+  // JSON.parse of every new line, run again for each online player.
+  messagesSince(cursor) {
+    return this.q.msgSince.all(Number(cursor) || 0).map((r) => ({ key: r.key, ...JSON.parse(r.json) }));
   }
 
   get cursor() {
@@ -807,6 +882,13 @@ export class Store {
 
     return rep;
   }
+}
+
+// A Discord message id, or '' for one of ours. Ours are "o" + digits by
+// construction (index.js ownId), Discord's are 17-20 bare digits.
+export function snowflake(id) {
+  const s = String(id || '');
+  return /^\d{17,20}$/.test(s) ? s : '';
 }
 
 function rowFaction(r) {

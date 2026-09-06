@@ -105,10 +105,6 @@ function ownId() {
   return `o${Date.now()}${String(ownSeq).padStart(5, '0')}`;
 }
 
-// Where each server has read up to. Kept per server id, because one bridge
-// can serve several stands and they are not at the same place in the stream.
-const cursors = new Map();
-
 let http;
 
 const discord = new DiscordSide(cfg, store, (key, msg) => {
@@ -215,7 +211,7 @@ function queuePush(uid, line, kind = 'chat') {
   // uid null -- розголос: конверт їде кожному серверу один раз, а вже гра
   // рознесе його всім своїм гравцям.
   pendingPushes.push({ seq: pushSeq, uid, kind, json: JSON.stringify(line) });
-  while (pendingPushes.length > 200) pendingPushes.shift();
+  if (pendingPushes.length > 200) pendingPushes.splice(0, pendingPushes.length - 200);
 }
 const stampNow = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
 
@@ -1139,7 +1135,8 @@ function drain({ ServerId, Cursor, Uids, Fresh, Mirrors }) {
       rolesMirror.warm(discord.guild).catch((e) => console.warn(`[roles] warm failed: ${e.message}`));
     }
   }
-  const from = Number.isInteger(Cursor) ? Cursor : (cursors.get(ServerId) ?? 0);
+  // The game's Cursor is a plain int and always arrives (OZ_BridgeTypes.c).
+  const from = Number(Cursor) || 0;
 
   // The game says so itself when it has just started and remembers nothing.
   // Everything this server was told before that is void.
@@ -1148,24 +1145,50 @@ function drain({ ServerId, Cursor, Uids, Fresh, Mirrors }) {
     rolesSeen.delete(ServerId);
   }
 
+  const uids = Array.isArray(Uids) ? Uids : [];
+  const here = new Set(uids);
   const items = [];
-  for (const uid of Uids || []) {
-    for (const m of store.since(uid, from)) {
-      const pc = store.convo(m.key);
-      items.push({
-        Kind: 'chat',
-        Json: JSON.stringify({
-          Uid: uid,
-          Id: m.key,
-          At: m.at,
-          Who: m.who,
-          Text: m.text,
-          Mine: m.uid === uid,
-          AUid: m.uid || '',
-          Kind: pc ? pc.kind : '',
-          Title: pc ? pc.title : '',
-        }),
-      });
+
+  // ONE PASS OVER THE NEW LINES, NOT ONE PER PLAYER.
+  //
+  // This asked the store for "everything since the cursor that this uid may
+  // see" once per online player -- each call a full read of the message tail
+  // AND a full read of the conversation table with a JSON.parse per row. On
+  // forty players and three hundred conversations that was tens of thousands
+  // of parses per empty poll. Now: one query for the lines, one for the
+  // conversations, and membership answered once per conversation.
+  const fresh = store.messagesSince(from);
+  if (fresh.length) {
+    const convos = new Map();
+    for (const c of store.convosAll()) convos.set(c.key, c);
+
+    const readers = new Map(); // conversation key -> the polled uids in it
+    for (const m of fresh) {
+      let to = readers.get(m.key);
+      if (!to) {
+        const c = convos.get(m.key);
+        to = c ? uids.filter((uid) => Store.memberOf(c, uid)) : [];
+        readers.set(m.key, to);
+      }
+      if (!to.length) continue;
+
+      const c = convos.get(m.key);
+      for (const uid of to) {
+        items.push({
+          Kind: 'chat',
+          Json: JSON.stringify({
+            Uid: uid,
+            Id: m.key,
+            At: m.at,
+            Who: m.who,
+            Text: m.text,
+            Mine: m.uid === uid,
+            AUid: m.uid || '',
+            Kind: c ? c.kind : '',
+            Title: c ? c.title : '',
+          }),
+        });
+      }
     }
   }
 
@@ -1174,7 +1197,7 @@ function drain({ ServerId, Cursor, Uids, Fresh, Mirrors }) {
   const seenSeq = pushSeen.has(ServerId) ? pushSeen.get(ServerId) : pushSeq;
   for (const p of pendingPushes) {
     if (p.seq <= seenSeq) continue;
-    if (p.uid && !(Uids || []).includes(p.uid)) continue;
+    if (p.uid && !here.has(p.uid)) continue;
     items.push({ Kind: p.kind || 'chat', Json: p.json });
   }
   pushSeen.set(ServerId, pushSeq);
@@ -1224,7 +1247,7 @@ function drain({ ServerId, Cursor, Uids, Fresh, Mirrors }) {
     rolesSeen.set(ServerId, seen);
   }
 
-  for (const uid of Uids || []) {
+  for (const uid of uids) {
     const view = rolesFor(uid);
     if (!view) {
       // Cannot answer for him now. Drop what we remember, so the projection
@@ -1245,10 +1268,9 @@ function drain({ ServerId, Cursor, Uids, Fresh, Mirrors }) {
   // Forget whoever left. He may come back to a server that restarted while
   // he was away, and the projection has to reach him again.
   for (const uid of [...seen.keys()]) {
-    if (!(Uids || []).includes(uid)) seen.delete(uid);
+    if (!here.has(uid)) seen.delete(uid);
   }
 
-  cursors.set(ServerId, store.cursor);
   return { Cursor: store.cursor, Items: items };
 }
 
@@ -1285,9 +1307,9 @@ async function wipePlayer(uid, serverId = '') {
   const chatMirrored = serverId ? mirrored(serverId, 'chat') : anyMirrored('chat');
 
   // З приватних тредiв -- геть, але самi треди лишаються жити.
-  for (const key of store.allConvoKeys()) {
-    const c = store.convo(key);
-    if (!c || !c.members || !c.members.includes(uid)) continue;
+  for (const c of store.convosAll()) {
+    const key = c.key;
+    if (!c.members || !c.members.includes(uid)) continue;
     if (c.kind !== 'group' && c.kind !== 'direct') continue;
 
     if (discordId && c.threadId) {
