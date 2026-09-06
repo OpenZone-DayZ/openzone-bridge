@@ -1145,6 +1145,21 @@ function drain({ ServerId, Cursor, Uids, Fresh, Mirrors }) {
     rolesSeen.delete(ServerId);
   }
 
+  // A SERVER THAT REMEMBERS NOTHING GETS THE CURSOR, NOT THE HISTORY.
+  //
+  // The game's cursor starts at 0 and does not survive a restart, so every
+  // restart used to ask for "everything" -- and the bridge honestly packed
+  // the whole stored history of every online player, zone included, into one
+  // batch of RPCs, at the exact moment a single-core game server is busiest
+  // booting. Thirty players made it thousands of envelopes in one poll
+  // callback.
+  //
+  // Nothing is lost by skipping it: a pushed line is a live notification for
+  // a device that is already on, and every conversation is read from
+  // /v1/chat/open, which serves the same store. What the game needs from this
+  // first poll is where the stream is now.
+  const replay = !Fresh && from > 0;
+
   const uids = Array.isArray(Uids) ? Uids : [];
   const here = new Set(uids);
   const items = [];
@@ -1157,7 +1172,7 @@ function drain({ ServerId, Cursor, Uids, Fresh, Mirrors }) {
   // forty players and three hundred conversations that was tens of thousands
   // of parses per empty poll. Now: one query for the lines, one for the
   // conversations, and membership answered once per conversation.
-  const fresh = store.messagesSince(from);
+  const fresh = replay ? store.messagesSince(from) : [];
   if (fresh.length) {
     const convos = new Map();
     for (const c of store.convosAll()) convos.set(c.key, c);

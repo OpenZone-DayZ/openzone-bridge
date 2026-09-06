@@ -28,6 +28,14 @@ async function call(path, json) {
   return body;
 }
 
+function poll(cursor, uids, fresh = false) {
+  return fetch(BASE + '/v1/poll', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ Secret: SECRET, ServerId: SERVER, Cursor: cursor, Uids: uids, Fresh: fresh }),
+  }).then((r) => r.json());
+}
+
 function ok(label, cond, detail = '') {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${label}${detail ? '  ' + detail : ''}`);
   if (!cond) process.exitCode = 1;
@@ -46,6 +54,15 @@ const listB = await call('/v1/chat/list', { Uid: B.uid });
 ok('A sees the conversation', listA.Items.some((i) => i.Id === key));
 ok('B sees the same one', listB.Items.some((i) => i.Id === key));
 
+console.log('--- a fresh poll hands over the cursor, not the history ---');
+// A game server that has just booted holds no cursor. It used to be answered
+// with everything the store remembers for every player it named, in one
+// batch of RPCs, while it was still starting up.
+const firstPoll = await poll(0, [A.uid, B.uid], true);
+ok('a fresh poll carries no chat history',
+  firstPoll.Items.every((i) => i.Kind !== 'chat'), `${firstPoll.Items.length} item(s)`);
+ok('and says where the stream is', Number.isInteger(firstPoll.Cursor) && firstPoll.Cursor > 0, String(firstPoll.Cursor));
+
 console.log('--- send from the game ---');
 // The probe text carries a per-run nonce: identical texts across runs let a
 // LATE Discord echo of the previous run claim this run's expect, and the
@@ -55,11 +72,7 @@ await call('/v1/chat/send', { Uid: A.uid, Name: A.name, Id: key, Text: probe });
 
 console.log('--- poll: the message arrives only once Discord has it ---');
 const t0 = Date.now();
-const batch = await fetch(BASE + '/v1/poll', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ Secret: SECRET, ServerId: SERVER, Cursor: 0, Uids: [A.uid, B.uid] }),
-}).then((r) => r.json());
+const batch = await poll(firstPoll.Cursor, [A.uid, B.uid]);
 const held = Date.now() - t0;
 
 // CHAT lines only: a fresh server id is also handed the roster and the role
@@ -70,8 +83,8 @@ const lines = batch.Items.filter((i) => i.Kind === 'chat').map((i) => JSON.parse
 ok('poll returned the message', lines.some((l) => l.Text.includes(probe)), `${held} ms, ${batch.Items.length} item(s)`);
 ok('it is addressed to both members', new Set(lines.map((l) => l.Uid)).size === 2);
 
-// The poll replays from cursor 0, so history — the zone included — rides
-// along; pick OUR line, not merely the first one addressed to A.
+// Other conversations may have moved while this ran, so pick OUR line rather
+// than merely the first one addressed to A.
 const mineForA = lines.find((l) => l.Uid === A.uid && l.Text.includes(probe));
 ok('A sees it as their own', mineForA?.Mine === true);
 ok('the speaker kept their name', mineForA?.Who === A.name, mineForA?.Who);
