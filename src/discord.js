@@ -21,6 +21,27 @@ import {
   ThreadAutoArchiveDuration,
 } from 'discord.js';
 
+// WHO SAID IT, BY ID -- never by name.
+//
+// A message typed in Discord carries its author's Discord id, and the link
+// table turns that into a stalker for any message, however old. This is the
+// one tier that works at unlimited depth and costs nothing: the answer is
+// already in the store.
+//
+// A webhook post is a line the GAME sent, and its only identity is the
+// character name the game supplied. Resolving that by name is the bug this
+// exists to avoid -- a renamed player loses his own lines and a namesake
+// inherits them -- so it stays empty and the caller says "unknown" rather
+// than guessing. The claims ladder that resolves these live (see #incoming)
+// cannot help here: a claim is matched once, at echo time, and is gone.
+//
+// Exported so the test drives the rule itself rather than a copy of it.
+export function authorOf(m, botId, store) {
+  if (!m || m.webhookId) return '';
+  if (!m.author || m.author.id === botId) return '';
+  return store.steamIdOf(m.author.id) || '';
+}
+
 export class DiscordSide {
   constructor(cfg, store, onMessage) {
     this.cfg = cfg;
@@ -1332,23 +1353,8 @@ export class DiscordSide {
           text = cut[2];
         }
       }
-      // WHO SAID IT, BY ID -- never by name.
-      //
-      // A message typed in Discord carries its author's Discord id, and the
-      // link table turns that into a stalker for any message, however old.
-      // This is the one tier that works at unlimited depth and costs
-      // nothing: the answer is already in the store.
-      //
-      // A webhook post is a line the GAME sent, and its only identity is the
-      // character name the game supplied. Resolving that by name is exactly
-      // the bug this is fixing -- a renamed player loses his own lines and a
-      // namesake inherits them -- so it is left empty and the caller says
-      // "unknown" instead of guessing. The claims ladder that resolves these
-      // live (see #incoming) cannot help here: a claim is matched once, at
-      // echo time, and is gone.
-      let uid = '';
-      if (!m.webhookId && m.author?.id !== this.client.user.id)
-        uid = this.store.steamIdOf(m.author?.id) || '';
+      // Who said it: the rule lives in authorOf at the top of this file.
+      const uid = authorOf(m, this.client.user.id, this.store);
 
       out.push({
         id: m.id,

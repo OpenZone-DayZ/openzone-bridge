@@ -7,12 +7,24 @@
 //   node test/roundtrip.mjs
 //
 // Reads the secret from .env; it is never printed.
+//
+// IT CLEANS UP AFTER ITSELF, and it has to. This ran as an ordinary server
+// under the stand's own id and left its fake characters, their conversations
+// and a group called «Звалище» in the live base on every single run.
+//
+// Two halves to that. The ServerId is this test's own, so the bridge has
+// never heard it declare a mirror and nothing here reaches the guild at all
+// (a conversation gets a Discord thread only where chat is mirrored). And
+// what it wrote into the base it deletes at the end, through the same store
+// the running bridge has open -- SQLite in WAL mode takes a second writer.
 
 import 'dotenv/config';
+import { Store } from '../src/store.js';
 
 const BASE = `http://127.0.0.1:${process.env.BRIDGE_PORT || 8787}`;
 const SECRET = process.env.OZ_SHARED_SECRET;
-const SERVER = 'stand';
+// Not the stand's id: a server the bridge has not met mirrors nothing.
+const SERVER = 'roundtrip-test';
 
 const A = { uid: '76561100000000001', name: 'Bродяга' };
 const B = { uid: '76561100000000002', name: 'Сидорович' };
@@ -133,4 +145,18 @@ const bad = await fetch(BASE + '/v1/chat/list', {
   body: JSON.stringify({ Secret: 'nope', ServerId: SERVER, Json: { Uid: A.uid } }),
 });
 ok('403', bad.status === 403);
+
+console.log('--- and the base is left as it was found ---');
+{
+  // The same file the bridge is serving from, opened a second time: WAL
+  // makes that safe, and the bridge holds no conversation in memory.
+  const store = new Store(process.env.BRIDGE_DB || './state/bridge.sqlite');
+  let gone = 0;
+  for (const k of [key, grp.Id]) if (store.dropConvo(k)) gone++;
+  for (const uid of [A.uid, B.uid]) store.forgetName(uid);
+  const left = store.convosAll().filter((c) => c.members?.some((m) => m === A.uid || m === B.uid));
+  store.close();
+  ok('the conversations this run made are gone', gone === 2, `${gone} dropped`);
+  ok('and nothing of its characters is left behind', left.length === 0, `${left.length} left`);
+}
 
