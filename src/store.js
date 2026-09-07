@@ -162,12 +162,18 @@ export class Store {
     // WAL: readers never block the writer and a crash mid-write leaves the
     // last committed state, not a torn file.
     this.db.exec('PRAGMA journal_mode = WAL');
-    // NORMAL, not FULL. Under WAL a crashing PROCESS loses nothing either
-    // way -- the difference is a power cut, which may cost the last commits.
-    // FULL bought that at two or three fsyncs per chat line, on the same disk
-    // the game server writes to; the line is also in Discord whenever the
-    // mirror is on. Set it back to FULL if the host has no UPS.
-    this.db.exec('PRAGMA synchronous = NORMAL');
+    // FULL, and back to it deliberately.
+    //
+    // NORMAL stood here from phase D on the argument that a crashing PROCESS
+    // loses nothing under WAL either way and the line is in Discord anyway --
+    // true, and beside the point on both halves. The functional spec section
+    // 5 and TZ-2 R6.1 ask for atomic state and a durable write BECAUSE the
+    // home moved here: a chat line sent with the mirror off, a news post, a
+    // role row exist in this file and nowhere else in the world, and a power
+    // cut under NORMAL costs the last commits of exactly those. No report
+    // records an owner's decision to trade that away, so the recorded
+    // requirement stands (phase E rule).
+    this.db.exec('PRAGMA synchronous = FULL');
     this.db.exec('PRAGMA foreign_keys = ON');
     for (const ddl of SCHEMA) this.db.exec(ddl);
     this.#upgrade();
@@ -218,6 +224,36 @@ export class Store {
     if (!mcols.includes('joined_at')) {
       this.db.exec("ALTER TABLE members ADD COLUMN joined_at TEXT NOT NULL DEFAULT ''");
     }
+
+    // WHO FOUNDED THIS GROUP, WRITTEN DOWN (TZ-5 R-F4.4).
+    //
+    // It used to be read out of the KEY: `g:<uid>:<seq>`, minted once and
+    // never changed. That made founding untransferable by construction, and
+    // a permadeath then left a group nobody could delete or leave-as-owner --
+    // the code said so itself in a comment. The field can move; the key
+    // cannot, so the key stops being the answer.
+    //
+    // Rows written before the field get it from the prefix they already
+    // carry, which is exactly what the old readers computed on the fly.
+    // Raw statements, not #meta/#setMeta: #prepare() has not run yet when
+    // #upgrade() is called, and the columns it prepares against are the ones
+    // being added right here.
+    const done = this.db.prepare('SELECT value FROM meta WHERE key = ?').get('convo_owner');
+    if (!done) {
+      const rows = this.db.prepare("SELECT key, json FROM convos WHERE key LIKE 'g:%'").all();
+      const set = this.db.prepare('UPDATE convos SET json = ? WHERE key = ?');
+      for (const r of rows) {
+        let c;
+        try { c = JSON.parse(r.json); } catch { continue; }
+        if (!c || c.owner) continue;
+        const cut = r.key.indexOf(':', 2);
+        if (cut <= 2) continue;
+        c.owner = r.key.slice(2, cut);
+        set.run(JSON.stringify(c), r.key);
+      }
+      this.db.prepare('INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+        .run('convo_owner', '1');
+    }
   }
 
   #prepare() {
@@ -262,8 +298,6 @@ export class Store {
       newsAll: q('SELECT json FROM news ORDER BY ts'),
       newsSet: q('INSERT INTO news(id, ts, json) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET ts = excluded.ts, json = excluded.json'),
       newsDel: q('DELETE FROM news WHERE id = ?'),
-      newsCount: q('SELECT COUNT(*) AS n FROM news'),
-      newsOldest: q('SELECT id FROM news ORDER BY ts LIMIT ?'),
 
       msgHas: q('SELECT 1 FROM messages WHERE key = ? AND id = ?'),
       msgIns: q('INSERT INTO messages(cursor, key, id, at, text, in_discord, json) VALUES (?, ?, ?, ?, ?, ?, ?)'),
@@ -652,17 +686,10 @@ export class Store {
     return this.q.newsDel.run(String(id)).changes > 0;
   }
 
-  // Oldest out when the feed runs long. Safe to drop here in a way chat is
-  // not: news are authored in Discord and stay there, so an evicted post is
-  // still where it was written.
-  newsTrim(keep) {
-    const n = this.q.newsCount.get().n;
-    if (n <= keep) return;
-    const doomed = this.q.newsOldest.all(n - keep);
-    this.#tx(() => {
-      for (const r of doomed) this.q.newsDel.run(r.id);
-    });
-  }
+  // newsTrim() lived here and is GONE (TZ-5 R-D1.1, owner 2026-09-01): the
+  // feed keeps every post. The ring buffer was inherited from the JSON blob
+  // that could not be read a page at a time; SQLite can, and /v1/news/list
+  // does.
 
   // ---- messages ----
 
