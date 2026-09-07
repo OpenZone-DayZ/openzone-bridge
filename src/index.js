@@ -51,11 +51,25 @@ function need(name) {
   return v;
 }
 
+// THE DISCORD FOUR ARE OPTIONAL, THE SECRET IS NOT (TZ-2 R2.6).
+//
+// need() stood on all five and the bridge refused to start without a bot
+// token -- so chat, news, factions and the wipe, every one of which lives in
+// this bot's own database, were as optional as a Discord application. The
+// owner asked for the lowest rung: with no token the HTTP side and the store
+// run exactly as they do with one, and the guild side is a stub that says so.
+//
+// The three ids beside the token are only ever read by that stub, so they are
+// demanded together with it: half a Discord configuration is a mistake worth
+// naming, an absent one is a mode.
+const token = String(process.env.DISCORD_BOT_TOKEN || '').trim();
+const needBot = (name) => (token ? need(name) : String(process.env[name] || ''));
+
 const cfg = {
-  token: need('DISCORD_BOT_TOKEN'),
-  clientId: need('DISCORD_CLIENT_ID'),
-  guildId: need('DISCORD_GUILD_ID'),
-  parentChannelId: need('DISCORD_PARENT_CHANNEL_ID'),
+  token,
+  clientId: needBot('DISCORD_CLIENT_ID'),
+  guildId: needBot('DISCORD_GUILD_ID'),
+  parentChannelId: needBot('DISCORD_PARENT_CHANNEL_ID'),
   port: Number(process.env.BRIDGE_PORT || 8787),
   // Loopback by default: the DayZ server is the only party that talks here
   // and the secret rides in a plain-http body. 0.0.0.0 behind a terminator.
@@ -187,6 +201,18 @@ function discordIdsOf(members) {
   return members.map((uid) => store.linkOf(uid)?.discordId).filter(Boolean);
 }
 
+// WHAT TO CALL SOMEBODY THE GUILD CANNOT NAME (TZ-2 R2.6).
+//
+// Without a bot every player is unlinked, and there are no personas at all:
+// the only name anybody has is the one the game gave us, and failing that the
+// Steam64 itself. Never an empty string -- a nameless author or a nameless
+// member of a conversation is a hole on the screen with no way to fill it,
+// and the id at least identifies a person to whoever is reading.
+function nameFor(uid) {
+  if (!uid) return '';
+  return store.nameOf(uid) || store.linkOf(uid)?.discordName || uid;
+}
+
 // THE ROW FIRST, AND THE THREAD ONLY IF THE GUILD IS MEANT TO SEE IT.
 //
 // A private thread used to be created for every conversation whether the
@@ -199,12 +225,16 @@ function discordIdsOf(members) {
 //
 // The conversation is ours; Discord is a surface. Turning the mirror on
 // later builds the missing threads (mirror.js).
-async function startConversation(key, kind, title, members, serverId) {
+async function startConversation(key, kind, title, members, serverId, owner = '') {
   store.putConvo(key, {
     threadId: '',
     kind,
     title,
     members,
+    // WHO FOUNDED IT, AS A FIELD (TZ-5 R-F4.4). Read out of the key before,
+    // which made founding untransferable and left a permadeath's group
+    // undeletable by anybody. Empty for kinds that have no founder.
+    owner,
     createdAt: new Date().toISOString(),
   });
   await bindThread(key, serverId);
@@ -332,6 +362,18 @@ function anchorOf(key, id) {
   return String(m?.dId || '') || snowflake(id);
 }
 
+// WHOSE GROUP THIS IS (TZ-5 R-F4.4). The field when there is one; the key's
+// prefix for a row written before the field existed and never touched since
+// -- the store's migration fills those in at start, and this is the belt to
+// that pair of braces. A conversation that is not a group has no founder.
+function ownerOf(c, key) {
+  if (!c || c.kind !== 'group') return '';
+  if (c.owner) return c.owner;
+  if (!key.startsWith('g:')) return '';
+  const cut = key.indexOf(':', 2);
+  return cut > 2 ? key.slice(2, cut) : '';
+}
+
 async function pairFreeze(a, b, frozen) {
   if (!a || !b) return { Error: 'no_chat' };
   // EVERY direct conversation the pair has, not the first one found. The key
@@ -344,7 +386,9 @@ async function pairFreeze(a, b, frozen) {
 
     c.pairFrozen = frozen;
     store.putConvo(c.key, c);
-    if (c.threadId) {
+    // The freeze itself is ours and always answers; the guild's lock is the
+    // surface, and with no bot there is no surface (R2.6).
+    if (c.threadId && discord.configured) {
       try { await discord.lockThread(c.threadId, frozen); }
       catch (err) { console.warn(`[chat] thread lock failed: ${err.message}`); }
     }
@@ -432,10 +476,10 @@ const routes = {
       Desc: c.desc || '',
       // GAME names first: the Zone knows one identity, and the Discord nick
       // is not it. The nick only fills in for people the game never saw.
-      Members: c.kind === 'zone' ? [] : c.members.map((m) => store.nameOf(m) || store.linkOf(m)?.discordName || m),
+      Members: c.kind === 'zone' ? [] : c.members.map(nameFor),
       More: more,
       Before: page.before,
-      Owner: key.startsWith(`g:${uid}:`),
+      Owner: ownerOf(c, key) === uid,
       Frozen: !!until || (c.kind === 'direct' && !!c.pairFrozen),
       Lines: shown,
     };
@@ -556,7 +600,7 @@ const routes = {
     // same key: the second used to overwrite the first's row and leave its
     // thread orphaned in the guild. Millisecond plus a counter, like ownId.
     const key = `g:${uid}:${Date.now().toString(36)}${groupSeq()}`;
-    await startConversation(key, 'group', title || 'group', [uid], ServerId);
+    await startConversation(key, 'group', title || 'group', [uid], ServerId, uid);
     if (desc) {
       const c = store.convo(key);
       c.desc = byteClip(desc, 200);
@@ -597,9 +641,10 @@ const routes = {
     const c = store.convo(key);
     if (!c || !c.members.includes(uid)) return { Error: 'no_chat' };
     if (c.kind !== 'group') return { Error: 'not_group' };
-    // Deleting is the FOUNDER's act alone -- his uid is minted into the
-    // key forever (owner's decision 2026-08-29).
-    if (!key.startsWith(`g:${uid}:`)) return { Error: 'not_owner' };
+    // Deleting is the FOUNDER's act alone (owner's decision 2026-08-29), and
+    // the founder is now the RECORD's, not the key's: founding passes on a
+    // permadeath (R-F4.4), and a key cannot be rewritten.
+    if (ownerOf(c, key) !== uid) return { Error: 'not_owner' };
 
     // ARCHIVED, NOT DESTROYED (TZ-4 R-D4.2). Deleting used to take the
     // thread and every member's copy of the talk with it. Now the group
@@ -762,9 +807,8 @@ const routes = {
     const c = store.convo(key);
     if (!c || !c.members.includes(uid)) return { Error: 'no_chat' };
     if (c.kind !== 'group') return { Error: 'not_group' };
-    // The creator does not leave -- he deletes: a group whose key names an
-    // absent founder would be deletable by nobody at all.
-    if (key.startsWith(`g:${uid}:`)) return { Error: 'not_owner' };
+    // The founder does not leave -- he deletes.
+    if (ownerOf(c, key) === uid) return { Error: 'not_owner' };
 
     c.members = c.members.filter((m) => m !== uid);
     store.putConvo(key, c);
@@ -773,7 +817,7 @@ const routes = {
     // failure here is logged, not fatal: the roster is already right, and
     // the next ensureThread would not re-add a non-member anyway.
     const left = store.linkOf(uid);
-    if (c.threadId && left) {
+    if (c.threadId && left && discord.configured) {
       try {
         await discord.removeFromThread(c.threadId, left.discordId);
       } catch (err) {
@@ -884,7 +928,13 @@ const routes = {
   },
 
   // --- news ---
-  '/v1/news/list': async () => news.list(),
+  //
+  // A PAGE, NOT THE FEED (TZ-5 R-D1.1/R-D1.2). The feed keeps every post now,
+  // so the whole of it can no longer ride in one answer: the game asks with
+  // the Cursor it was last given and gets the next Next back, empty at the
+  // bottom. A game that sends neither field gets the newest page, which is
+  // what it used to get when fifty was the whole feed.
+  '/v1/news/list': async ({ Json }) => news.list(Json?.Cursor || '', Json?.Limit || 0),
   '/v1/news/open': async ({ Json }) => news.open(Json.Id),
 
   // WHICH NAMES THIS PERSON MAY SIGN WITH (TZ-6 R2.1).
@@ -949,8 +999,12 @@ const routes = {
     const wanted = String(asName || '').trim();
     if (wanted) {
       const allowed = personas.allowedFor(resolved, admin);
-      // Allowed[] used to ride along here; no game type ever declared it.
-      if (!allowed.includes(wanted)) return { Error: 'not_your_voice' };
+      // THE LIST RIDES WITH THE REFUSAL (TZ-6 R1.3, acceptance 5.3). It was
+      // dropped in phase D because no game type declared the field; the fix
+      // for that is to declare it, which OZ_NewsFail and OZ_NewsAdminAnswer
+      // now do -- "that name is not yours" without saying which names are is
+      // the kind of answer that sends a leader reading source.
+      if (!allowed.includes(wanted)) return { Error: 'not_your_voice', Allowed: allowed };
       who = wanted;
     } else if (!admin && !who) {
       // Nobody we can name: an unlinked non-admin has no author at all.
@@ -981,6 +1035,10 @@ const routes = {
   // its callback, an unauthenticated GET, would re-link a SteamID that was
   // already taken, which the code path refuses.
   '/v1/link/begin': async ({ Json }) => {
+    // A code is redeemed with /link IN DISCORD. With no bot there is nobody
+    // to type it at, and handing out a code that can never be spent is the
+    // silent failure R2.6 exists to remove: refuse, and name the reason.
+    if (!discord.configured) return { Error: 'discord_off' };
     const c = codes.mint(Json.Uid);
     return { Code: c.code, ExpiresInSec: c.expiresInSec };
   },
@@ -1002,6 +1060,10 @@ const routes = {
   // history of the kind from the base into the guild, report counts, and
   // only then does the game write Mirror: true. Idempotent -- see mirror.js.
   '/v1/mirror/fill': async ({ Json }) => {
+    // Two different refusals, and the admin needs to tell them apart: a bot
+    // that is configured but not connected is worth waiting for, one that is
+    // not configured at all is worth a decision (R2.6).
+    if (!discord.configured) return { Ok: false, Why: 'Discord is not configured on this bridge', Pushed: 0, Skipped: 0, Failed: 0, Note: '' };
     if (!discord.guild) return { Ok: false, Why: 'the bot is not connected', Pushed: 0, Skipped: 0, Failed: 0, Note: '' };
     const kind = String(Json.Kind || '');
     // The roles kind is a different fill: not lines into threads but the
@@ -1123,7 +1185,10 @@ function caller(uid) {
     admin,
     leader: !!(resolved && resolved.Posts && resolved.Posts.includes('leader')),
     org: (resolved && resolved.Org) || '',
-    self: (uid && store.nameOf(uid)) || member?.displayName || '',
+    // The game name first, the Discord nick next, the Steam64 last: without
+    // a bot a leader still signs his own posts (R2.6), and "no author at
+    // all" is not an answer the news page can draw.
+    self: uid ? (store.nameOf(uid) || member?.displayName || uid) : '',
   };
 }
 
@@ -1209,6 +1274,12 @@ const mirrors = new Map();
 // failure (a missing thread) is recoverable, the loud one (private chat
 // spilled into Discord) is not.
 function mirrored(serverId, kind) {
+  // NO BOT, NO MIRROR, whatever the server's file says (TZ-2 R2.6). The
+  // server asserts its mirror list on every poll and cannot know whether
+  // this bridge has a Discord application; answering "yes" here would send
+  // every chat line down a path that ends in a thrown "Discord is not
+  // configured" and a warning per message.
+  if (!discord.configured) return false;
   const list = mirrors.get(serverId);
   if (!list) return false;
   return list.has(kind);
@@ -1217,6 +1288,7 @@ function mirrored(serverId, kind) {
 // The same question with no server to ask it for -- a wipe started by the
 // bot command. Any server that mirrors the kind makes the answer yes.
 function anyMirrored(kind) {
+  if (!discord.configured) return false;
   for (const list of mirrors.values()) {
     if (list.has(kind)) return true;
   }
@@ -1232,7 +1304,11 @@ function drain({ ServerId, Cursor, Uids, Fresh, Mirrors }) {
     const now = new Set(Mirrors);
     const same = was && was.size === now.size && [...now].every((k) => was.has(k));
     if (!same) {
-      const what = Mirrors.length ? Mirrors.join(', ') : 'nothing - the guild stays quiet';
+      let what = Mirrors.length ? Mirrors.join(', ') : 'nothing - the guild stays quiet';
+      // A server that asks for mirrors on a bridge with no bot is not wrong,
+      // it is uninformed: say once which side is missing, so nobody goes
+      // looking for the threads that will never appear (R2.6).
+      if (Mirrors.length && !discord.configured) what += ' - but Discord is not configured, so nothing is mirrored';
       console.log(`[mirror] ${ServerId} shows: ${what}`);
     }
     mirrors.set(ServerId, now);
@@ -1436,7 +1512,7 @@ async function wipePlayer(uid, serverId = '') {
     if (!c.members || !c.members.includes(uid)) continue;
     if (c.kind !== 'group' && c.kind !== 'direct') continue;
 
-    if (discordId && c.threadId) {
+    if (discordId && c.threadId && discord.configured) {
       try {
         await discord.removeFromThread(c.threadId, discordId);
       } catch {
@@ -1448,6 +1524,33 @@ async function wipePlayer(uid, serverId = '') {
     // Зi складу розмови його прибираємо: iнакше наступний ensureThread
     // запросив би той самий акаунт назад.
     c.members = c.members.filter((m) => m !== uid);
+
+    // FOUNDING PASSES ON, OR THE GROUP GOES (TZ-5 R-F4.4/R-F4.5, H36).
+    //
+    // The founder's uid used to be readable only out of the key, minted once
+    // and never changed -- so a permadeath left a group whose founder is not
+    // in it: undeletable, unleavable-as-owner, and the code admitted as much
+    // in its own comment. It passes to the LONGEST-STANDING member left, the
+    // same way faction leadership does; the roster is in join order, because
+    // invite_accept pushes onto the end of it. Nobody left means there is no
+    // group to manage, and it goes with its thread.
+    if (c.kind === 'group' && ownerOf(c, key) === uid) {
+      if (c.members.length === 0) {
+        if (c.threadId && discord.configured) {
+          try {
+            await discord.deleteThread(c.threadId, 'OpenZone: the last member of the group is gone');
+          } catch {
+            // Already deleted, or no permission: the row goes either way.
+          }
+        }
+        store.dropConvo(key);
+        console.log(`[wipe] group ${key} had nobody left and was deleted`);
+        continue;
+      }
+      c.owner = c.members[0];
+      console.log(`[wipe] group ${key} founded by ${uid} passes to ${c.owner}`);
+    }
+
     store.putConvo(key, c);
 
     // A private thread of a dead character is over: locked and archived in
@@ -1489,7 +1592,7 @@ function rolesFor(uid) {
   return { ...view, DName: member?.displayName || link?.discordName || '' };
 }
 
-http = new HttpSide(cfg, { routes, drain });
+http = new HttpSide(cfg, { routes, drain, discordOn: () => discord.configured });
 
 // The bot command is a wipe started OUTSIDE the game, so the game has to be
 // told: it freezes the character's record and seals his devices on the push.
@@ -1501,19 +1604,21 @@ discord.onWipe = async (uid) => {
 
 await discord.start();
 
-// The first start after the move carries the guild's roles into the tables
-// (R7.10). Once; the marker is set only after a real attempt.
-try {
-  await rolesMirror.importIfNeeded(discord.guild);
-} catch (e) {
-  console.warn(`[roles] import from Discord failed: ${e.message}; it will be tried on the next start`);
-}
+if (discord.configured) {
+  // The first start after the move carries the guild's roles into the tables
+  // (R7.10). Once; the marker is set only after a real attempt.
+  try {
+    await rolesMirror.importIfNeeded(discord.guild);
+  } catch (e) {
+    console.warn(`[roles] import from Discord failed: ${e.message}; it will be tried on the next start`);
+  }
 
-// Manual edits in the guild are put back on the member update event; the
-// sweep catches whatever the gateway did not deliver (R7.6).
-setInterval(() => {
-  rolesMirror.reconcileAll(discord.guild, 'sweep').catch((e) => console.warn(`[roles] sweep failed: ${e.message}`));
-}, 10 * 60 * 1000).unref();
+  // Manual edits in the guild are put back on the member update event; the
+  // sweep catches whatever the gateway did not deliver (R7.6).
+  setInterval(() => {
+    rolesMirror.reconcileAll(discord.guild, 'sweep').catch((e) => console.warn(`[roles] sweep failed: ${e.message}`));
+  }, 10 * 60 * 1000).unref();
+}
 
 // The store is the home for news too (owner, 2026-09-01). Passing it here
 // is the whole wiring: News reads what it already owns at construction and
@@ -1545,6 +1650,26 @@ async function furnish(what, make) {
     return null;
   }
 }
+
+// THE TOWN SQUARE EXISTS WITHOUT A GUILD (TZ-2 R2.6). Its row used to be
+// written only when Discord handed back a channel for it, so a bridge with
+// no bot had no zone conversation at all and every PDA opened an empty chat
+// list. The conversation is ours; the channel is a surface it may also have.
+if (!store.convo('zone')) {
+  store.putConvo('zone', {
+    threadId: '',
+    kind: 'zone',
+    title: 'Зона',
+    members: ['*'],
+    createdAt: new Date().toISOString(),
+  });
+}
+
+// Everything below builds or adopts furniture IN THE GUILD, and there is no
+// guild to build in without a bot. Skipped rather than attempted and caught:
+// four warnings about a Discord that was never configured read as four
+// faults (R2.6).
+if (discord.configured) {
 
 // Typed homes for threads: direct talks and groups each get their own
 // channel; the ids live in the bridge state so a rename survives.
@@ -1596,6 +1721,8 @@ discord.useNews(news);
   const ch = await furnish('the news forum', () => news.start(discord, store.guildRef('newsChannelId')));
   if (ch) store.setGuildRef('newsChannelId', ch.id);
 }
+
+} // end: furniture in the guild
 
 await http.listen();
 console.log('[bridge] ready');

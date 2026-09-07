@@ -34,6 +34,27 @@ The bridge closes that gap:
 - Caches recent messages so the PDA still shows history and can queue outgoing
   messages while Discord is unreachable.
 
+## Running without a Discord bot
+
+Leave `DISCORD_BOT_TOKEN` empty in `.env` and the bridge starts anyway. Everything
+whose home is this service — chat, the news feed, factions and roles, the wipe —
+runs exactly as it does with a bot, because all of it lives in the bridge's own
+SQLite. What is missing is the guild: mirrors, slash commands and `/link` are
+unavailable and say so (`discord_off`) instead of failing quietly, and one line at
+start-up names the mode rather than pretending to connect. Nobody is linked in this
+mode, so a player is named by his in-game name, or by his Steam64 when even that is
+unknown.
+
+`GET /v1/ping` carries the difference: `{"ok":true,"discord":false}` without a bot
+and `"discord":true` with one, so the game and the admin can tell **the bridge is
+down** from **the bridge is up and has no bot**. The game reads that field once at
+start-up and treats "Discord is not configured" the same way it treats "no mirrors
+are on" — the link gate is not held for a service that writes nowhere.
+
+Setting `DISCORD_BOT_TOKEN` makes `DISCORD_CLIENT_ID`, `DISCORD_GUILD_ID` and
+`DISCORD_PARENT_CHANNEL_ID` required: half a Discord configuration is a mistake and
+the bridge refuses to start on it, while an absent one is a mode.
+
 ## Running
 
 Node.js **24+** (the store is `node:sqlite`, which ships unflagged from 24 -- nothing to

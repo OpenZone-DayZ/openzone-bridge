@@ -60,8 +60,12 @@ export class HttpSide {
     // Reachability check, and nothing else: no secret, no state, no answer
     // that says anything about the guild. Setting a bridge up means proving
     // the game can reach it before wondering why chat is empty.
+    // `discord` is the one thing it does say, and it is not about the guild:
+    // it tells "the bridge is down" from "the bridge is up and has no bot"
+    // (TZ-2 R2.6) with one boolean, which the game and the admin both need
+    // and neither can work out from a timeout.
     if (req.url.startsWith('/v1/ping')) {
-      return this.#json(res, 200, { ok: true });
+      return this.#json(res, 200, { ok: true, discord: !!this.handlers.discordOn?.() });
     }
 
     if (req.method !== 'POST') {

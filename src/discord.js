@@ -57,6 +57,17 @@ export class DiscordSide {
     this.onMessage = onMessage;
     this.webhook = null;
 
+    // NO TOKEN IS A MODE, NOT A FAULT (TZ-2 R2.6).
+    //
+    // The bridge used to demand DISCORD_BOT_TOKEN before it would start at
+    // all, which made the whole HTTP side -- chat, news, factions, the wipe,
+    // every one of them living in this bot's own database -- exactly as
+    // optional as a Discord application. The owner asked for the lowest rung:
+    // the store and the HTTP half do not depend on whether a bot is
+    // configured. With no token this side becomes a STUB that refuses in
+    // words, rather than a client pretending to connect.
+    this.configured = !!String(cfg.token || '').trim();
+
     // Lines we are in the middle of sending, so their echo can be attributed:
     // thread + speaker + text -> the SteamIDs waiting for it.
     //
@@ -143,7 +154,23 @@ export class DiscordSide {
     this.codes = codes;
   }
 
+  // Every door into the guild passes here. Without a bot they do not go
+  // quiet -- they REFUSE, in words: "Discord is not configured" is a
+  // different fact from "the bridge is down", and whoever reads the log has
+  // to be able to tell them apart (R2.6). Callers already treat a throw from
+  // a guild call as "the line is home, the mirror missed it".
+  #needBot() {
+    if (!this.configured) throw new Error('Discord is not configured');
+  }
+
   async start() {
+    if (!this.configured) {
+      // ONE LINE, and it says what still works. A stub that logged nothing
+      // would look like a bot that failed to log in.
+      console.log('[discord] no bot token: the guild side is off. The store and HTTP run as usual; mirrors, slash commands and /link are unavailable (TZ-2 R2.6)');
+      return;
+    }
+
     await this.client.login(this.cfg.token);
     this.guild = await this.client.guilds.fetch(this.cfg.guildId);
     this.parent = await this.client.channels.fetch(this.cfg.parentChannelId);
@@ -1054,6 +1081,7 @@ export class DiscordSide {
   // exists. Threads archive themselves; posting wakes them, so an old
   // conversation continues in the same place instead of scattering.
   async ensureThread(key, title, memberDiscordIds) {
+    this.#needBot();
     const known = this.store.convo(key);
     if (known?.threadId) {
       // ONLY "GONE" MEANS GONE -- the same discipline as #lookUp below.
@@ -1113,6 +1141,7 @@ export class DiscordSide {
   // did not answer" must never turn into a second channel built beside the
   // one that is already there.
   async findOrCreateChannel({ knownId, name, type, topic, parent, reason }) {
+    this.#needBot();
     if (knownId) {
       try {
         const ch = await this.client.channels.fetch(knownId);
@@ -1185,6 +1214,7 @@ export class DiscordSide {
   // The webhook that can reach a thread: its parent channel's own, with the
   // chat parent's webhook as the fallback for threads born before the split.
   async hookFor(threadId) {
+    this.#needBot();
     const th = await this.client.channels.fetch(threadId).catch(() => null);
     if (th?.parentId && this.hookByChannel?.has(th.parentId)) {
       return this.hookByChannel.get(th.parentId);
@@ -1228,6 +1258,7 @@ export class DiscordSide {
   // first-cut zone thread; pointed at a channel by mistake it would delete a
   // channel, which is not a mistake anybody recovers from.
   async deleteThread(threadId, reason) {
+    this.#needBot();
     const th = await this.client.channels.fetch(threadId).catch(() => null);
     if (th && th.isThread?.()) await th.delete(reason);
   }
@@ -1236,6 +1267,7 @@ export class DiscordSide {
   // locked so nobody writes into a dead group, archived so it leaves the
   // active list. Deleting it took every member's copy of the talk away.
   async archiveThread(threadId, reason) {
+    this.#needBot();
     const th = await this.client.channels.fetch(threadId).catch(() => null);
     if (!th) return;
     try { await th.setLocked(true, reason); } catch { /* archived below anyway */ }
@@ -1244,6 +1276,7 @@ export class DiscordSide {
 
   // Leaving a group in the game leaves its thread too (TZ-4 R-D4.1).
   async removeFromThread(threadId, discordId) {
+    this.#needBot();
     if (!discordId) return;
     const th = await this.client.channels.fetch(threadId).catch(() => null);
     if (th) await th.members.remove(discordId);
@@ -1253,6 +1286,7 @@ export class DiscordSide {
   // channel and every other conversation in a thread; channels.fetch
   // resolves both, so one door serves the whole mark-TTL sweep.
   async deleteMessage(threadOrChannelId, messageId) {
+    this.#needBot();
     const ch = await this.client.channels.fetch(threadOrChannelId);
     await ch.messages.delete(messageId);
   }
@@ -1260,6 +1294,7 @@ export class DiscordSide {
   // Lock or unlock a thread: a frozen direct conversation stays readable
   // in Discord but takes no new messages -- same rule the game enforces.
   async lockThread(threadId, locked) {
+    this.#needBot();
     const th = await this.client.channels.fetch(threadId);
     await th.setLocked(locked);
   }
@@ -1268,14 +1303,22 @@ export class DiscordSide {
   // of a fetch: the fact behind the "load older" button (TZ-4 R-D2.4).
   async hasOlder(threadId, beforeId) {
     if (!beforeId) return false;
+    // No guild to ask: the store's own edge is then the bottom of what
+    // anybody can show, and that is an honest "no more" (R2.6).
+    if (!this.configured) return false;
 
-    // The answer for one (thread, message) pair does not change: Discord ids
-    // are time-ordered, so nothing can appear before a line that is already
-    // there. Opening a short conversation asked this over REST every single
-    // time, against the same 50/s budget the chat itself spends.
+    // ONLY "NO" IS REMEMBERED (TZ-4 R-D2.4: the flag must be a FACT).
+    //
+    // "There is nothing before this line" cannot become false: Discord ids
+    // are time-ordered and nothing can appear behind a message that already
+    // exists. "There IS something older" can and does become false -- an
+    // admin deletes the old lines, a thread is trimmed -- and a memo that
+    // kept the true answer for the life of the process left the "load older"
+    // button lit over an empty tier for as long as the bridge ran. So the
+    // yes is measured every time, and the no is remembered for good.
     const key = threadId + '|' + beforeId;
-    this.olderKnown ??= new Map();
-    if (this.olderKnown.has(key)) return this.olderKnown.get(key);
+    this.olderKnown ??= new Set();
+    if (this.olderKnown.has(key)) return false;
 
     const th = await this.client.channels.fetch(threadId);
     const batch = await th.messages.fetch({ limit: 1, before: beforeId });
@@ -1283,12 +1326,15 @@ export class DiscordSide {
 
     // A plain cap, not an LRU: this is a memo, and forgetting all of it
     // costs one REST call per conversation that is still being read.
-    if (this.olderKnown.size > 2000) this.olderKnown.clear();
-    this.olderKnown.set(key, answer);
+    if (!answer) {
+      if (this.olderKnown.size > 2000) this.olderKnown.clear();
+      this.olderKnown.add(key);
+    }
     return answer;
   }
 
   async fetchOlder(threadId, beforeId, limit) {
+    this.#needBot();
     const th = await this.client.channels.fetch(threadId);
     const opts = { limit: Math.min(limit || 50, 100) };
     if (beforeId) opts.before = beforeId;
@@ -1318,6 +1364,7 @@ export class DiscordSide {
   }
 
   async renameThread(threadId, name) {
+    this.#needBot();
     const th = await this.client.channels.fetch(threadId);
     await th.setName(name.slice(0, 100));
   }
@@ -1325,6 +1372,7 @@ export class DiscordSide {
   // The news module speaks through a webhook too -- that is what puts the
   // persona's NAME on the post instead of the bot's.
   async webhookFor(channel) {
+    this.#needBot();
     return this.#webhookOn(channel);
   }
 
@@ -1362,6 +1410,7 @@ export class DiscordSide {
   // `uid` is who said it, noted before the line leaves so the echo can be
   // recognised as theirs whichever way the race falls.
   async say(threadId, name, text, uid, ownId = '') {
+    this.#needBot();
     const who = name.slice(0, 80);
     const body = text.slice(0, 1900);
 
@@ -1491,6 +1540,7 @@ export class DiscordSide {
   }
 
   async displayName(discordId) {
+    this.#needBot();
     try {
       const member = await this.guild.members.fetch(discordId);
       return member.displayName;
