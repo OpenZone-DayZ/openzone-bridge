@@ -25,6 +25,8 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Store } from '../src/store.js';
+import { Personas } from '../src/personas.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const db = join(tmpdir(), `oz-no-bot-${process.pid}.sqlite`);
@@ -59,6 +61,28 @@ console.log('the bridge runs without a Discord bot');
 const port = await freePort();
 const BASE = `http://127.0.0.1:${port}`;
 
+const A = '76561100000000101';
+const B = '76561100000000102';
+const C = '76561100000000103';
+// The administrator the server asserts, and the leader who is not one.
+const D = '76561100000000104';
+const E = '76561100000000105';
+
+// SEEDED BEFORE THE BRIDGE OPENS THE FILE, and only what no route can write:
+// personas are minted by a Discord slash command, which is exactly the door
+// that does not exist in this mode, and a game name is remembered by the
+// game. Closed before the child starts, so nothing shares a connection.
+{
+  const seed = new Store(db);
+  seed.rememberName(D, 'Полковник Ковальчук');
+  seed.rememberName(E, 'Сірий');
+  const p = new Personas(seed);
+  p.create('Сидорович', 'seed');
+  p.create('Бармен', 'seed');
+  p.grant('Бармен', 'duty');
+  seed.close();
+}
+
 const child = spawn(process.execPath, ['src/index.js'], {
   cwd: root,
   env: {
@@ -74,6 +98,9 @@ const child = spawn(process.execPath, ['src/index.js'], {
     // is new by definition, and the refusal to start beside an unmigrated
     // document is not what is under test here.
     BRIDGE_DB_FRESH: '1',
+    // The poll below is asserting a roster, not waiting for chat: hold it for
+    // a second rather than the eight a real server wants.
+    POLL_HOLD_SECONDS: '1',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -103,9 +130,19 @@ async function call(path, json) {
   return body;
 }
 
-const A = '76561100000000101';
-const B = '76561100000000102';
-const C = '76561100000000103';
+// The poll is the envelope a DayZ server sends, flat rather than wrapped in
+// Json: it is the game asserting its own configuration, authenticated by the
+// shared secret.
+async function poll(extra = {}) {
+  const r = await fetch(`${BASE}/v1/poll`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      Secret: SECRET, ServerId: 'no-bot-test', Cursor: 0, Fresh: true, Uids: [], Mirrors: [], ...extra,
+    }),
+  });
+  return r.json();
+}
 
 try {
   await ready();
@@ -129,7 +166,7 @@ try {
     /Discord is not configured/.test(fill.Why), true);
 
   // ---- chat, groups and the wipe run entirely on the store ----
-  await call('/v1/chat/start', { Uid: A, Name: 'Bродяга', OtherUid: B, OtherName: 'Сидорович' });
+  await call('/v1/chat/start', { Uid: A, Name: 'Бродяга', OtherUid: B, OtherName: 'Сидорович' });
   const list = await call('/v1/chat/list', { Uid: A });
   ok('a direct conversation exists with no thread anywhere',
     list.Items.some((i) => i.Kind === 'direct'), true);
@@ -139,7 +176,7 @@ try {
   ok('a broken contact still freezes the pair',
     await call('/v1/chat/pair_freeze', { A, B }), { ok: true });
   ok('and a frozen pair refuses new lines',
-    (await call('/v1/chat/send', { Uid: A, Name: 'Bродяга', Id: `d:${A < B ? A : B}:${A < B ? B : A}`, Text: 'hello' })).Error,
+    (await call('/v1/chat/send', { Uid: A, Name: 'Бродяга', Id: `d:${A < B ? A : B}:${A < B ? B : A}`, Text: 'hello' })).Error,
     'read_only');
 
   const grp = await call('/v1/chat/group_new', { Uid: A, Title: 'Звалище' });
@@ -176,6 +213,70 @@ try {
   const news = await call('/v1/news/list', {});
   ok('the feed answers a page', Array.isArray(news.Items), true);
   ok('and says whether there is another', news.Next, '');
+  ok('and a first page is not a restart', news.Restarted, false);
+
+  // ---- a group rename does not report a fault it did not have (note 4) ----
+  const named = await call('/v1/chat/group_new', { Uid: D, Title: 'Бар' });
+  await call('/v1/chat/group_edit', { Uid: D, Id: named.Id, Title: 'Бар «100 рентген»' });
+  ok('renaming a group with no thread warns about nothing',
+    /thread rename failed/.test(log), false);
+
+  // ---- AN ADMIN WITHOUT A GUILD IS STILL AN ADMIN (TZ-6 R3.2, R2.6) ----
+  //
+  // The bit used to come from discord.isAdminMember alone, so with no bot
+  // there was no guild and therefore no administrator: an admin who was not
+  // also a faction leader could not post news at all. The server asserts its
+  // own roster on the poll, over the shared secret -- the owner's
+  // Settings.json, the same list OZ_Perm.IsAdminUid reads.
+  ok('nobody is an admin before the server says so',
+    (await call('/v1/news/voices', { Uid: D })).Admin, false);
+
+  await poll({ AdminIds: [D] });
+
+  const voices = await call('/v1/news/voices', { Uid: D });
+  ok('the server\'s own administrator is one here too', voices.Admin, true);
+  ok('and an admin may sign with every persona',
+    voices.Voices.sort(), ['Бармен', 'Сидорович']);
+  ok('under his game name when he picks nobody', voices.Self, 'Полковник Ковальчук');
+
+  const posted = await call('/v1/news/post', { Uid: D, Title: 'Викид', Body: 'Буде за годину.' });
+  ok('and he posts news with no bot to author it in',
+    posted, { ok: true, Who: 'Полковник Ковальчук' });
+  ok('which lands in the feed like any other post',
+    (await call('/v1/news/list', {})).Items[0].Title, 'Викид');
+
+  ok('a uid the server never named is still nobody',
+    (await call('/v1/news/post', { Uid: E, Title: 'Викид', Body: 'Ні.' })).Error, 'not_allowed');
+
+  // ---- "that name is not yours" NAMES THE ONES THAT ARE (TZ-6 R1.3, #93) ----
+  //
+  // The field was silently dropped in phase D because no game type declared
+  // it; both surfaces declare and draw it now, and this is what keeps it from
+  // disappearing a second time.
+  ok('an admin asking for a name nobody minted is refused with the list',
+    await call('/v1/news/post', { Uid: D, Who: 'Лебедєв', Title: 'Викид', Body: 'Ні.' }),
+    { Error: 'not_your_voice', Allowed: ['Сидорович', 'Бармен'] });
+
+  // The same refusal for a LEADER, which is the caller R1.3 was written for.
+  await call('/v1/roles/apply', { Admin: true, TargetUid: E, Op: 'faction.set', Arg: 'duty' });
+  await call('/v1/roles/apply', { Admin: true, TargetUid: E, Op: 'post.add', Arg: 'leader' });
+
+  const his = await call('/v1/news/voices', { Uid: E });
+  ok('a leader is offered what his faction holds, and no more',
+    [his.Leader, his.Admin, his.Voices], [true, false, ['Бармен']]);
+  ok('and a persona of nobody\'s faction is refused with his own list',
+    await call('/v1/news/post', { Uid: E, Who: 'Сидорович', Title: 'Викид', Body: 'Ні.' }),
+    { Error: 'not_your_voice', Allowed: ['Бармен'] });
+
+  // ---- ONE CEILING FOR A BODY, AND THE REFUSAL CARRIES IT (#96) ----
+  ok('a body of exactly the ceiling is a body',
+    (await call('/v1/news/post', { Uid: D, Title: 'Рівно', Body: 'a'.repeat(1000) })).ok, true);
+  ok('one byte more is refused, and the reason says how much is allowed',
+    await call('/v1/news/post', { Uid: D, Title: 'Задовге', Body: 'a'.repeat(1001) }),
+    { Error: 'body_too_long', Max: 1000 });
+  ok('and it is BYTES, not characters -- 501 Cyrillic glyphs are 1002 bytes',
+    await call('/v1/news/post', { Uid: D, Title: 'Задовге', Body: 'я'.repeat(501) }),
+    { Error: 'body_too_long', Max: 1000 });
 } catch (err) {
   fail++;
   console.log(`  FAIL ${err.message}`);

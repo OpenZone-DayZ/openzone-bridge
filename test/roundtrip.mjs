@@ -26,7 +26,7 @@ const SECRET = process.env.OZ_SHARED_SECRET;
 // Not the stand's id: a server the bridge has not met mirrors nothing.
 const SERVER = 'roundtrip-test';
 
-const A = { uid: '76561100000000001', name: 'Bродяга' };
+const A = { uid: '76561100000000001', name: 'Бродяга' };
 const B = { uid: '76561100000000002', name: 'Сидорович' };
 
 async function call(path, json) {

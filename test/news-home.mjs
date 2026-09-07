@@ -16,7 +16,7 @@ import { existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.js';
-import { News, chunkBody } from '../src/news.js';
+import { News, chunkBody, CHUNK_MAX } from '../src/news.js';
 
 const path = join(tmpdir(), `oz-news-home-${process.pid}.json`);
 if (existsSync(path)) unlinkSync(path);
@@ -104,10 +104,21 @@ store.newsPut(post('3', 'third', 3000));
   ok('and never repeats a post', new Set(seen).size, 59);
   ok('newest first across pages', seen[0], '59');
 
+  ok('a page in the middle is not a restart', feed.list(p1.Next, 10).Restarted, false);
+
   // A cursor naming a post deleted since starts over rather than answering
-  // an empty page for a feed that is not empty.
-  ok('a stale cursor is not an empty feed',
-    feed.list('999999:gone', 5).Items.length, 5);
+  // an empty page for a feed that is not empty -- AND SAYS IT STARTED OVER.
+  //
+  // Without the word the PDA appends: it asked for what comes after row 30
+  // and got rows 1..5, which it inserts under the thirty already on screen.
+  // The newest posts then appear twice, and the reader has no way to tell
+  // which half is real. Next goes empty with it, because the walk that
+  // cursor belonged to no longer exists.
+  const stale = feed.list('999999:gone', 5);
+  ok('a stale cursor is not an empty feed', stale.Items.length, 5);
+  ok('it is the top of the feed again', stale.Items[0].Id, '59');
+  ok('and it says so, so the page replaces rather than appends', stale.Restarted, true);
+  ok('with no Next to continue a walk that is over', stale.Next, '');
 }
 
 // AN EDIT AND A DELETE ARE NEWS TOO.
@@ -149,16 +160,15 @@ ok('dropping what is already gone rings nothing', rung.length, 3);
 
 // ---- the cut itself (R-D1.5) ----
 //
-// On LINE boundaries, never mid-word, and never over 900 bytes -- the same
-// number the envelope slices at, so there is one ceiling and not two.
+// On LINE boundaries, never mid-word, and never over CHUNK_MAX bytes.
 {
   const lines = [];
   for (let i = 0; i < 60; i++) lines.push(`рядок ${i} про Зону та все, що в ній діється`);
   const cut = chunkBody(lines.join('\n'));
 
   ok('a long body becomes several chunks', cut.length > 1, true);
-  ok('no chunk is over 900 bytes',
-    cut.every((c) => Buffer.byteLength(c, 'utf8') <= 900), true);
+  ok('no chunk is over the ceiling',
+    cut.every((c) => Buffer.byteLength(c, 'utf8') <= CHUNK_MAX), true);
   ok('gluing them back gives the original', cut.join(''), lines.join('\n'));
   ok('every cut lands on a line boundary',
     cut.slice(0, -1).every((c) => c.endsWith('\n')), true);
@@ -169,9 +179,27 @@ ok('dropping what is already gone rings nothing', rung.length, 3);
   ok('one over-long line is split without breaking a character',
     huge.join(''), 'я'.repeat(1500));
   ok('and still respects the ceiling',
-    huge.every((c) => Buffer.byteLength(c, 'utf8') <= 900), true);
+    huge.every((c) => Buffer.byteLength(c, 'utf8') <= CHUNK_MAX), true);
 
   ok('an empty body is no chunks at all', chunkBody(''), []);
+
+  // THE CHUNK IS BOUNDED WHERE THE PARSER COUNTS -- ON THE WIRE (note 6).
+  //
+  // JsonFileLoader keeps 1023 bytes of a JSON string VALUE, and a parser
+  // counts the token it reads, escapes and all. A chunk of nothing but
+  // newlines doubles: at the old 900 that was 1800 bytes, 777 over. Every
+  // chunk of every shape below has to survive JSON.stringify inside 1023.
+  const nasty = [
+    '\n'.repeat(4000),                              // every byte a two-byte escape
+    'x\n'.repeat(2000),                             // 450-lines-of-one-character, at length
+    '"'.repeat(4000),                               // quotes escape the same way
+    'рядок "з лапками"\t- і табуляція\n'.repeat(200), // a body somebody might write
+  ];
+  ok('no chunk of any body crosses 1023 bytes once it is escaped',
+    nasty.every((body) => chunkBody(body)
+      .every((c) => Buffer.byteLength(JSON.stringify(c), 'utf8') <= 1023)), true);
+  ok('and every one of them still glues back byte for byte',
+    nasty.every((body) => chunkBody(body).join('') === body), true);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
