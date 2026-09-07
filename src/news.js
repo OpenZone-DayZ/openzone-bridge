@@ -36,10 +36,49 @@ import { byteClip, stamp } from './clip.js';
 
 // ONE CHUNK OF A BODY, IN BYTES (TZ-5 R-D1.5/R-D1.6).
 //
-// 900, and deliberately the same number as the envelope's own slicing
-// (OZ_Const.RPC_STR_CHUNK): two different ceilings for one and the same
-// engine limit is a way to miss by a hundred bytes exactly once.
-const CHUNK_MAX = 900;
+// 500, AND THE NUMBER IS MEASURED RATHER THAN BORROWED.
+//
+// It was 900, the same number as the envelope's own slicing
+// (OZ_Const.RPC_STR_CHUNK), on the reasoning that one engine limit deserves
+// one ceiling. Those are two different limits: RPC_STR_CHUNK bounds a string
+// the game SENDS, while the 1023 bytes that matter here are what
+// JsonFileLoader keeps of a JSON string value when it PARSES one -- and a
+// parser counts the token on the wire, escapes included.
+//
+// Measured with JSON.stringify, per 900 decoded bytes:
+//
+//   plain text (ASCII or Cyrillic)   900 bytes on the wire  x1.0
+//   all newlines / quotes / tabs    1800 bytes on the wire  x2.0
+//   450 lines of one character      1350 bytes on the wire  x1.5
+//
+// So a 900-byte chunk of short lines -- a perfectly ordinary news post --
+// rides as up to 1800 bytes and is 777 OVER the ceiling, and the 450-line
+// case is 327 over. The old number only ever worked because the probes that
+// set it used one long line.
+//
+// 500 makes the worst case 1000 bytes on the wire, 23 under the 1023 the
+// parser keeps. (A raw C0 control byte outside the five named escapes would
+// ride as \u00XX, six-fold -- but nothing that writes news can produce one:
+// not a Discord message, not a game edit box.)
+export const CHUNK_MAX = 500;
+
+// THE LONGEST BODY THE BRIDGE ACCEPTS, IN BYTES -- ONE NUMBER FOR EVERY
+// SURFACE (discrepancy #96).
+//
+// The bridge is the truth here. The VPP console and the PDA page each check
+// before they send, because a refusal that costs a round trip is a worse
+// refusal -- but those are courtesies, and they were not the same courtesy:
+// the core refused a body of exactly 1000 bytes and the PDA accepted it, and
+// the PDA's ceiling was an admin-editable Tuning value besides. Whatever the
+// two of them do, this is what decides.
+//
+// 1000: JsonFileLoader silently truncates every JSON string value at 1023
+// bytes on the parse side (measured, persistence-networking.md:520-522), and
+// a whole body still crosses the game's own boundary as one such value in
+// OZ_NewsAdminAsk.Body / OZ_NewsPostAsk.Body before it ever reaches this
+// chunking. The core's OZ_NewsAdminAsk.BODY_MAX and the ClampMax on the
+// PDA's Tuning.NoteBodyMaxBytes hold the same number.
+export const BODY_MAX = 1000;
 
 // How many archived pages the warm-up walks. Not a ring buffer -- nothing is
 // deleted by it -- only a bound on how much REST one start-up spends.
@@ -379,10 +418,16 @@ export class News {
       .sort((a, b) => (b.ts - a.ts) || (a.Id < b.Id ? 1 : a.Id > b.Id ? -1 : 0));
 
     let from = 0;
+    let restarted = false;
     if (cursor) {
       const at = all.findIndex((p) => `${p.ts}:${p.Id}` === String(cursor));
       // A cursor that named a post since deleted: start from the top rather
-      // than answer an empty page for a feed that has plenty in it.
+      // than answer an empty page for a feed that has plenty in it -- AND SAY
+      // SO. The page that asked was reading somewhere in the middle and is
+      // about to be handed the newest rows instead; without a word for that
+      // it appends them under the ones it already shows, and the reader sees
+      // the top of the feed twice.
+      restarted = at < 0;
       from = at < 0 ? 0 : at + 1;
     }
 
@@ -392,7 +437,11 @@ export class News {
 
     return {
       Items: page.map((p) => ({ Id: p.Id, Title: p.Title, Who: p.Who, At: p.At, Replies: p.Replies })),
-      Next: more && last ? `${last.ts}:${last.Id}` : '',
+      // Empty on a restart as well: a Next belongs to the walk that asked for
+      // it, and that walk is over. The reader gets the top of the feed and
+      // starts again -- which is what a feed that moved under him means.
+      Next: !restarted && more && last ? `${last.ts}:${last.Id}` : '',
+      Restarted: restarted,
     };
   }
 

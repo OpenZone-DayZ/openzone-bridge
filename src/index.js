@@ -24,7 +24,7 @@ import { HttpSide } from './http.js';
 import { LinkCodes } from './codes.js';
 import { Roles } from './roles.js';
 import { RolesMirror } from './roles-mirror.js';
-import { News } from './news.js';
+import { News, BODY_MAX } from './news.js';
 import { Personas } from './personas.js';
 
 // Store timestamps are UTC written as "YYYY-MM-DD HH:MM:SS". Date.parse
@@ -621,10 +621,17 @@ const routes = {
       c.title = byteClip(title, 100);
       // The thread wears the same name people see in game. A rename that
       // fails in Discord is not fatal: the store is what the game lists.
-      try {
-        await discord.renameThread(c.threadId, c.title);
-      } catch (err) {
-        console.warn(`[chat] thread rename failed: ${err.message}`);
+      //
+      // Guarded like every other guild door (R2.6): with no bot there is no
+      // thread to rename and #needBot() throws, so every group rename logged
+      // "thread rename failed: Discord is not configured" -- a warning that
+      // reads as a fault and is not one.
+      if (c.threadId && discord.configured) {
+        try {
+          await discord.renameThread(c.threadId, c.title);
+        } catch (err) {
+          console.warn(`[chat] thread rename failed: ${err.message}`);
+        }
       }
     }
     if (desc !== undefined) c.desc = byteClip(desc, 200);
@@ -944,8 +951,8 @@ const routes = {
   // and never decides rights from it -- it draws what it is given, and the
   // write route checks again anyway. Two checks, because a list is a hint
   // and a grant is a fact.
-  '/v1/news/voices': async ({ Json }) => {
-    const c = caller(Json && Json.Uid);
+  '/v1/news/voices': async ({ Json, ServerId }) => {
+    const c = caller(Json && Json.Uid, ServerId);
     return {
       // The name he signs with when he picks nobody. Empty for someone the
       // bridge cannot name at all, and the page says so rather than offering
@@ -969,13 +976,25 @@ const routes = {
   // who may reach a surface; only the bridge knows who leads what, because
   // leadership lives in the guild's roles. A server trusted about the second
   // would let a compromised console speak as anyone.
-  '/v1/news/post': async ({ Json }) => {
+  '/v1/news/post': async ({ Json, ServerId }) => {
     const { Uid: uid, Who: asName, Title: title, Body: body } = Json || {};
 
     if (!title || !String(title).trim()) return { Error: 'no_title' };
     if (!body || !String(body).trim()) return { Error: 'no_body' };
 
-    const { resolved, admin, leader, self } = caller(uid);
+    // THE CEILING LIVES HERE (discrepancy #96). Both surfaces measure the
+    // body before they send and both refuse over the same number, but a
+    // courtesy check is not a rule: the PDA's is an admin-editable Tuning
+    // value and either of them can be an older build. The refusal carries
+    // the number so the surface can say what the limit actually was rather
+    // than repeat its own.
+    //
+    // Bytes, not characters, and the game measures the same way -- Enforce's
+    // string.Length() is a byte count.
+    const bodyBytes = Buffer.byteLength(String(body), 'utf8');
+    if (bodyBytes > BODY_MAX) return { Error: 'body_too_long', Max: BODY_MAX };
+
+    const { resolved, admin, leader, self } = caller(uid, ServerId);
 
     // WHO MAY WRITE AT ALL (TZ-6 §2). Admins and faction leaders, nobody
     // else -- not a member of an organisation, not a linked stalker, not an
@@ -1175,11 +1194,27 @@ const routes = {
 
 // The five things every news route asks about the person calling it, worked
 // out once: both routes spelled this out identically.
-function caller(uid) {
+//
+// `serverId` is the authenticated caller -- the DayZ server that holds the
+// shared secret -- not a claim from a client.
+function caller(uid, serverId = '') {
   const link = uid ? store.linkOf(uid) : null;
   const member = link ? discord.memberOf(link.discordId) : null;
   const resolved = uid ? roles.viewOf(uid) : null;
-  const admin = member ? discord.isAdminMember(member) : false;
+  // THE ADMIN BIT MAY COME FROM THE GUILD OR FROM THE SERVER (TZ-6 R3.2).
+  //
+  // It used to come from the guild alone, so with no bot there was no guild
+  // and therefore no administrator: an admin who was not also a faction
+  // leader could not post news on a bridge with an empty token, which is the
+  // one thing R2.6 leaves broken.
+  //
+  // R3.2 forbids trusting anybody's word about WHOSE PERSONA A NAME IS, and
+  // that half is untouched: the persona list is still minted here and
+  // allowedFor() still decides. Who a server's administrators are is the
+  // game's own boundary -- the owner's Settings.json, the same file
+  // OZ_Perm.IsAdminUid reads -- and the server asserts it over the shared
+  // secret on its poll, not per request from a player.
+  const admin = (member ? discord.isAdminMember(member) : false) || adminAsserted(serverId, uid);
   return {
     resolved,
     admin,
@@ -1285,6 +1320,21 @@ function mirrored(serverId, kind) {
   return list.has(kind);
 }
 
+// WHO EACH SERVER SAYS ITS ADMINISTRATORS ARE, by ServerId.
+//
+// The same discipline as `mirrors` above and for the same reason: the roster
+// rides every poll, authenticated by the shared secret, and is cheap to
+// re-assert. It widens exactly one thing -- the `admin` bit in caller() --
+// and nothing here ever reaches personas.allowedFor as anything but that bit.
+const adminIds = new Map();
+
+function adminAsserted(serverId, uid) {
+  if (!serverId || !uid) return false;
+  const list = adminIds.get(serverId);
+  if (!list) return false;
+  return list.has(uid);
+}
+
 // The same question with no server to ask it for -- a wipe started by the
 // bot command. Any server that mirrors the kind makes the answer yes.
 function anyMirrored(kind) {
@@ -1295,7 +1345,20 @@ function anyMirrored(kind) {
   return false;
 }
 
-function drain({ ServerId, Cursor, Uids, Fresh, Mirrors }) {
+function drain({ ServerId, Cursor, Uids, Fresh, Mirrors, AdminIds }) {
+  if (Array.isArray(AdminIds)) {
+    // Said only when it CHANGES, like the mirror list beside it: the roster
+    // rides seven polls a minute. The COUNT and not the ids -- who they are
+    // is the owner's file, and a wall of Steam64 every restart helps nobody.
+    const wasAdmins = adminIds.get(ServerId);
+    const nowAdmins = new Set(AdminIds.filter((u) => typeof u === 'string' && u !== ''));
+    const sameAdmins = wasAdmins
+      && wasAdmins.size === nowAdmins.size
+      && [...nowAdmins].every((u) => wasAdmins.has(u));
+    if (!sameAdmins) console.log(`[admins] ${ServerId} asserts ${nowAdmins.size} administrator(s)`);
+    adminIds.set(ServerId, nowAdmins);
+  }
+
   if (Array.isArray(Mirrors)) {
     // Said only when it CHANGES. The list rides every poll -- seven times a
     // minute per server -- and a line each time would bury the one moment
