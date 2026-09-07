@@ -16,7 +16,7 @@ import { existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.js';
-import { News } from '../src/news.js';
+import { News, chunkBody } from '../src/news.js';
 
 const path = join(tmpdir(), `oz-news-home-${process.pid}.json`);
 if (existsSync(path)) unlinkSync(path);
@@ -52,11 +52,19 @@ ok('a fresh News over a store already has the posts',
 ok('newest first, by timestamp',
   news.list().Items[0].Title, 'newer');
 
+// The body rides as an ARRAY of chunks (TZ-5 R-D1.4): no single JSON string
+// value can be longer than 1023 bytes on the game's parse side, so the one
+// thing a long post cannot be is one string. A short body is one chunk.
 ok('open() returns the body without Discord',
-  news.open('1').Body, 'body of older');
+  news.open('1').Body, ['body of older']);
 
 ok('an unknown id still refuses',
   news.open('nope'), { Error: 'no_post' });
+
+// A body written before R-D1.4, read back from a database that holds one
+// string: converted on read, never a crash and never a lost post.
+ok('a stored string body reads back as chunks',
+  new News(new Store(path, 100)).open('2').Body, ['body of newer']);
 
 // A second process over the same file sees the same feed -- that is what
 // "home" means, as opposed to a cache that dies with the process.
@@ -67,12 +75,40 @@ const again = new News(new Store(path, 100));
 ok('the feed survives a restart with Discord unreachable',
   again.list().Items.map((p) => p.Title), ['newer', 'older']);
 
-// Eviction is allowed here in a way it is not for chat: news are authored in
-// Discord and stay there, so an evicted post is still where it was written.
+// ALL OF THEM, AND FOREVER (TZ-5 R-D1.1, owner 2026-09-01). A ring buffer of
+// fifty stood here, in News and in the store both; a post past the fiftieth
+// stopped existing for the game and no restart brought it back.
 store.newsPut(post('3', 'third', 3000));
-store.newsTrim(2);
-ok('trimming drops the oldest and keeps the cap',
-  new News(new Store(path, 100)).list().Items.map((p) => p.Title), ['third', 'newer']);
+{
+  for (let i = 4; i < 60; i++) store.newsPut(post(String(i), `p${i}`, 3000 + i));
+
+  const feed = new News(new Store(path, 100));
+  ok('nothing is evicted -- 59 posts stay 59 posts',
+    feed.list('', 100).Items.length, 59);
+
+  // A PAGE, AND A CURSOR THAT IS A FACT (R-D1.2): Next is empty only at the
+  // real bottom, and paging with it walks the feed exactly once.
+  const p1 = feed.list('', 10);
+  ok('a page is as long as it was asked to be', p1.Items.length, 10);
+  ok('and it says where the next one starts', p1.Next !== '', true);
+
+  const seen = [];
+  let cursor = '';
+  for (let guard = 0; guard < 20; guard++) {
+    const page = feed.list(cursor, 10);
+    for (const it of page.Items) seen.push(it.Id);
+    cursor = page.Next;
+    if (!cursor) break;
+  }
+  ok('paging by cursor walks the whole feed', seen.length, 59);
+  ok('and never repeats a post', new Set(seen).size, 59);
+  ok('newest first across pages', seen[0], '59');
+
+  // A cursor naming a post deleted since starts over rather than answering
+  // an empty page for a feed that is not empty.
+  ok('a stale cursor is not an empty feed',
+    feed.list('999999:gone', 5).Items.length, 5);
+}
 
 // AN EDIT AND A DELETE ARE NEWS TOO.
 //
@@ -89,17 +125,54 @@ news.onNews = (p, fresh) => rung.push([p.Id, fresh]);
 
 news.edit('1', 'a corrected body', 'admin');
 ok('an edited body rings, and not as a fresh post', rung, [['1', false]]);
-ok('the edit is what open() serves', news.open('1').Body, 'a corrected body');
+ok('the edit is what open() serves', news.open('1').Body, ['a corrected body']);
 
 news.edit('1', 'a corrected body', 'admin');
 ok('the same body again rings nothing', rung.length, 1);
 
-news.drop('2');
-ok('a deleted post rings', rung, [['1', false], ['2', false]]);
-ok('and it is gone from the list', news.list().Items.map((p) => p.Title), ['older']);
+// THE STARTER WAS DELETED IN DISCORD (R-D1.3, H24), which is not the same
+// fact as a post with nothing written in it: the page has to be able to say
+// so, and it needs to be told which of the two this is.
+news.starterGone('1');
+ok('a deleted starter empties the body', news.open('1').Body, []);
+ok('and says it was deleted', news.open('1').Deleted, true);
+ok('a post with a body is not "deleted"', news.open('2').Deleted, false);
+ok('the deletion rings the feed', rung.length, 2);
 
 news.drop('2');
-ok('dropping what is already gone rings nothing', rung.length, 2);
+ok('a deleted post rings', rung.length, 3);
+ok('and it is gone from the list',
+  news.list().Items.filter((p) => p.Id === '2').length, 0);
+
+news.drop('2');
+ok('dropping what is already gone rings nothing', rung.length, 3);
+
+// ---- the cut itself (R-D1.5) ----
+//
+// On LINE boundaries, never mid-word, and never over 900 bytes -- the same
+// number the envelope slices at, so there is one ceiling and not two.
+{
+  const lines = [];
+  for (let i = 0; i < 60; i++) lines.push(`рядок ${i} про Зону та все, що в ній діється`);
+  const cut = chunkBody(lines.join('\n'));
+
+  ok('a long body becomes several chunks', cut.length > 1, true);
+  ok('no chunk is over 900 bytes',
+    cut.every((c) => Buffer.byteLength(c, 'utf8') <= 900), true);
+  ok('gluing them back gives the original', cut.join(''), lines.join('\n'));
+  ok('every cut lands on a line boundary',
+    cut.slice(0, -1).every((c) => c.endsWith('\n')), true);
+
+  // One line longer than a chunk on its own: there is no boundary to use, so
+  // the byte-safe clip takes over and no glyph is halved.
+  const huge = chunkBody('я'.repeat(1500));
+  ok('one over-long line is split without breaking a character',
+    huge.join(''), 'я'.repeat(1500));
+  ok('and still respects the ceiling',
+    huge.every((c) => Buffer.byteLength(c, 'utf8') <= 900), true);
+
+  ok('an empty body is no chunks at all', chunkBody(''), []);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
