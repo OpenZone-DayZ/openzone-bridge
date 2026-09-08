@@ -1,9 +1,12 @@
 // TZ-2 section 15: the roles home is SQLite, Discord is a mirror.
 //
 // Runs against a throwaway store and a fake guild. Touches neither the real
-// guild nor the stand. Covers acceptance 15.1-15.6 and 15.8-15.9 as far as
-// they can be covered without a game server: rows first, mirror follows,
-// manual edits reverted, removals travel by name.
+// guild nor the stand. Covers acceptance 15.1 (minus its "import with a
+// fake guild" clause -- that ran once for the 2026-09-02 move and left with
+// the rest of the one-time import), 15.3-15.6 and 15.8-15.9, as far as they
+// can be covered without a game server: rows first, mirror follows, manual
+// edits reverted, removals travel by name. 15.2 was the same import's
+// first-start log line and is not covered here anymore either.
 
 import { existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';

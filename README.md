@@ -69,16 +69,25 @@ run, refuse to start without `.env`, and then just run `node src/index.js`.
 ## Tests
 
 ```
-npm run check   # every file in src/, test/ and scripts/ still parses
-npm test        # every file under test/
+npm run check     # every file in src/, test/ and scripts/ still parses
+npm test          # every offline suite, named one by one on purpose
+npm run test:live # test/roundtrip.mjs against a running bridge
 ```
 
-Most of the suite runs offline against a throwaway SQLite file and touches
-neither Discord nor the stand. Two need more: `test/roundtrip.mjs` talks to a
-**running** bridge on `BRIDGE_PORT` and reads the shared secret from `.env`
-(it never prints it), and it polls under a ServerId of its own so the guild
-sees nothing and drops the rows it wrote when it finishes. `BRIDGE_DB` points
-any of them at another database.
+`npm test` runs offline against a throwaway SQLite file and touches neither
+Discord nor the stand. It names its files instead of letting `node --test`
+discover them, because that discovery is recursive over anything under a
+directory called `test` and would otherwise pick up `test/roundtrip.mjs`
+too; a `pretest` check fails loudly if the named list and the directory ever
+disagree, so a new suite has to be added to `package.json` on purpose before
+it runs. `BRIDGE_DB` points any offline suite that reads it at another
+database.
+
+`test/roundtrip.mjs` is the one suite that needs more, which is why it is
+not in that list: it talks to a **running** bridge on `BRIDGE_PORT` and
+reads the shared secret from `.env` (it never prints it), and it polls
+under a ServerId of its own so the guild sees nothing and drops the rows it
+wrote when it finishes. Run it on purpose with `npm run test:live`.
 
 ## State
 
