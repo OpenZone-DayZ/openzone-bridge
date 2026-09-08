@@ -88,15 +88,8 @@ default (`BRIDGE_DB` in `.env`). Writes are atomic and the chat tail is read
 from a cursor, not by loading the whole file; a line that exists only here is
 never evicted.
 
-Upgrading from a bridge that kept `state/bridge.json`: the bot does **not**
-migrate on its own. Run
-
-```
-node scripts/migrate-json-to-sqlite.mjs
-```
-
-once, read the report, and only then start the bridge; it refuses to start
-beside an unmigrated document. Back up `state/` the way you would any small
+A fresh host needs nothing but a filled-in `.env`: the `state/` directory and
+the database file are created on first start. Back it up like any small
 database -- copy the `.sqlite` file while the bridge is stopped, or use
 `sqlite3 state/bridge.sqlite ".backup state/bridge.bak"` while it runs.
 
