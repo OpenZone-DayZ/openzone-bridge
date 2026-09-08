@@ -3,9 +3,9 @@
 // Runs against a throwaway store and a fake guild. Touches neither the real
 // guild nor the stand. Covers acceptance 15.1-15.6 and 15.8-15.9 as far as
 // they can be covered without a game server: rows first, mirror follows,
-// manual edits reverted, removals travel by name, the one-time import.
+// manual edits reverted, removals travel by name.
 
-import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.js';
@@ -95,42 +95,16 @@ console.log('bootstrap');
 {
   const store = fresh('boot');
   const roles = new Roles(store);
-  const b = roles.bootstrap('');
+  const b = roles.bootstrap();
   ok('seeded from the defaults', b.source, 'defaults');
   ok('ten factions', roles.factions().length, DEFAULTS.Factions.length);
   ok('three ranks, two traits', [roles.ranks().length, roles.traits().length], [3, 2]);
   ok('the base is the loner flag', roles.base().slug, 'loner');
   ok('stamp starts at 1', roles.stamp(), 1);
 
-  const again = roles.bootstrap('');
+  const again = roles.bootstrap();
   ok('a second bootstrap adds nothing', [again.source, again.grew], ['db', []]);
   ok('and keeps the stamp', roles.stamp(), 1);
-
-  // The old JSON registry with the guild's ids and an admin rename.
-  const store2 = fresh('json');
-  const roles2 = new Roles(store2);
-  const jsonPath = join(tmpdir(), `oz-roles-${process.pid}.json`);
-  const raw = structuredClone(DEFAULTS);
-  // The FILE has a version; the defaults object does not (nothing ever read
-  // DEFAULTS.Version, so it is gone). bootstrap takes the file only when it
-  // looks like one.
-  raw.Version = 1;
-  raw.Stamp = 41;
-  raw.Factions[1].RoleId = '900';
-  raw.Factions[1].Label = 'Долг (renamed)';
-  raw.Factions[1].Limit = 12;
-  raw.Factions[1].Posts[0].RoleId = '901';
-  raw.Factions.push({ Slug: 'renegade', Label: 'Ренегати', Color: 1, Posts: [{ Slug: 'leader', Label: 'Лідер ренегатів' }], Ranks: [{ Slug: 'sgt', Label: 'Сержант', Order: 2 }] });
-  raw.Ranks[0].RoleId = '910';
-  writeFileSync(jsonPath, JSON.stringify(raw));
-  const b2 = roles2.bootstrap(jsonPath);
-  ok('seeded from roles.json', b2.source, 'roles.json');
-  ok('the stamp carries on from the file', roles2.stamp(), 42);
-  const duty = roles2.find('duty');
-  ok('ids, label and limit survive the move', [duty.node.roleId, duty.node.label, duty.node.limit], ['900', 'Долг (renamed)', 12]);
-  ok('the leader post keeps its id', roles2.find('duty:leader').node.roleId, '901');
-  ok("the admin's own faction and its rank come along", [roles2.find('renegade').kind, roles2.find('renegade:sgt').kind], ['faction', 'facrank']);
-  unlinkSync(jsonPath);
 }
 
 // ---- 2. membership ---------------------------------------------------------
@@ -138,7 +112,7 @@ console.log('bootstrap');
 console.log('membership');
 const store = fresh('main');
 const roles = new Roles(store);
-roles.bootstrap('');
+roles.bootstrap();
 {
   ok('an unknown character has no view', roles.viewOf('100'), null);
   roles.ensureMember('100');
@@ -389,41 +363,6 @@ console.log('mirror on');
   // The sweep finds nothing after all that.
   const sw = await mirror.reconcileAll(guild, 'sweep');
   ok('the sweep is quiet when the guild matches', [sw.checked, sw.fixed, sw.failed], [2, 0, 0]);
-}
-
-// ---- 6. the one-time import ------------------------------------------------
-
-console.log('import');
-{
-  const st = fresh('import');
-  const rl = new Roles(st);
-  rl.bootstrap('');
-  const guild = fakeGuild();
-  // The catalog already carries ids, as a roles.json would have.
-  for (const e of [...rl.entries()]) {
-    const role = await guild.roles.create({ name: e.label });
-    rl.setRoleId(e.slug, role.id);
-  }
-  const id = (slug) => rl.find(slug).node.roleId;
-  st.link('111', 'd-111', 'one');
-  st.link('222', 'd-222', 'two');
-  st.link('333', 'd-333', 'three');
-  guild.addMember('d-111', [id('loner'), id('duty'), id('duty:leader'), id('stalker-legend'), id('medic')]);
-  guild.addMember('d-222', [id('loner'), id('stalker-novice')]);
-  // Two factions at once: neither is taken, the rest still comes.
-  guild.addMember('d-333', [id('loner'), id('duty'), id('freedom'), id('stalker-experienced')]);
-
-  const mirror = new RolesMirror(rl, st, { isOn: () => false, log, echoWindowMs: 0 });
-  logged.length = 0;
-  const imp = await mirror.importIfNeeded(guild);
-  ok('the import ran once', [imp.done, imp.members], [true, 3]);
-  ok('a leader comes across whole', rl.viewOf('111'), { Base: 'loner', Org: 'duty', Conflict: [], Posts: ['leader'], Rank: 'stalker-legend', FRank: '', Traits: ['medic'] });
-  ok('a plain stalker too', rl.viewOf('222'), { Base: 'loner', Org: '', Conflict: [], Posts: [], Rank: 'stalker-novice', FRank: '', Traits: [] });
-  ok('two factions at once: no org, rank kept', [rl.viewOf('333').Org, rl.viewOf('333').Rank], ['', 'stalker-experienced']);
-  ok('the log says so', logged.some((l) => l.includes('imported 10 factions, 3 members from Discord')), true);
-  const again = await mirror.importIfNeeded(guild);
-  ok('a second start does not import again', again.done, false);
-  ok('nothing was written to the guild by the import', guild.writes.length, 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

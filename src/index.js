@@ -125,12 +125,11 @@ const discord = new DiscordSide(cfg, store, (key, msg) => {
 const codes = new LinkCodes(store);
 discord.useCodes(codes);
 
-// THE ROLES HOME IS THE STORE (TZ-2 section 15). The old JSON registry is
-// read exactly once, on the first start after the move, to carry the
-// guild's role ids and the admin's renames into the tables.
+// THE ROLES HOME IS THE STORE (TZ-2 section 15). Empty tables are seeded
+// from the defaults; after that the tables are the truth.
 const roles = new Roles(store);
 {
-  const boot = roles.bootstrap(join(dirname(cfg.dbPath), 'roles.json'));
+  const boot = roles.bootstrap();
   let said = `[roles] catalog: ${roles.factions().length} factions from ${boot.source}`;
   if (boot.grew.length) said += `; new in this version: ${boot.grew.join(', ')}`;
   console.log(said);
@@ -1652,14 +1651,6 @@ discord.onWipe = async (uid) => {
 await discord.start();
 
 if (discord.configured) {
-  // The first start after the move carries the guild's roles into the tables
-  // (R7.10). Once; the marker is set only after a real attempt.
-  try {
-    await rolesMirror.importIfNeeded(discord.guild);
-  } catch (e) {
-    console.warn(`[roles] import from Discord failed: ${e.message}; it will be tried on the next start`);
-  }
-
   // Manual edits in the guild are put back on the member update event; the
   // sweep catches whatever the gateway did not deliver (R7.6).
   setInterval(() => {

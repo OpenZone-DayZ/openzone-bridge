@@ -22,8 +22,6 @@
 // follows ids, never names, because Discord permits duplicate role names and
 // gives no error for them.
 
-import { readFileSync } from 'node:fs';
-
 // Colours as plain integers. discord.js 14.27 deprecated `color` in favour of
 // `colors: { primaryColor }`, and passing the old key emits a process warning.
 const C = {
@@ -120,7 +118,6 @@ const SLUG = /^[a-z][a-z0-9_-]{1,23}$/;
 const NOVICE = 'stalker-novice';
 
 const STAMP = 'roles_stamp';
-const IMPORTED = 'roles_imported_at';
 
 export class Roles {
   constructor(store) {
@@ -132,35 +129,20 @@ export class Roles {
 
   // Fill empty tables and adopt what a newer version ships.
   //
-  // FIRST START takes the old JSON registry when there is one: that file
-  // carried the guild's Discord role ids and the admin's renames, and both
-  // survive the move. Without a file, the defaults. Either way the tables
-  // are the home from this moment and the file is never read again.
+  // FIRST START seeds the defaults. The tables are the home from this
+  // moment on.
   //
   // ADD ONLY after that. Never remove an entry the tables have and the
   // defaults do not: that is the admin's own faction, and a bot update is
   // not the moment to delete it. Never overwrite a label or a colour
   // either -- he is allowed to rename things.
-  bootstrap(jsonPath = '') {
+  bootstrap() {
     let source = 'db';
     const grew = [];
 
     if (this.store.factionCount() === 0) {
-      let raw = null;
-      if (jsonPath) {
-        try {
-          raw = JSON.parse(readFileSync(jsonPath, 'utf8'));
-        } catch {
-          // No file, or unreadable: the defaults it is.
-        }
-      }
-      if (raw && raw.Version && Array.isArray(raw.Factions)) {
-        this.#seed(raw);
-        source = 'roles.json';
-      } else {
-        this.#seed(DEFAULTS);
-        source = 'defaults';
-      }
+      this.#seed(DEFAULTS);
+      source = 'defaults';
     }
 
     this.store.tx(() => {
@@ -905,52 +887,6 @@ export class Roles {
       if (was && !was.base) this.#succession(cat, was.slug, 'the leader was wiped', touched);
     });
     return { touched: [...touched] };
-  }
-
-  // ---- the one-time import -----------------------------------------------
-
-  // Membership as the Discord roles say it, by the rules the old registry
-  // projected with: highest rank wins, exactly one real faction or none,
-  // posts and the faction rank only inside that faction. Used ONCE, to
-  // carry the guild's current state into the tables (R7.10); after that the
-  // tables are the truth and this direction is never read again.
-  resolveFromRoles(has) {
-    const cat = this.#catalog();
-    const held = (x) => !!(x.roleId && !x.missing && has(x.roleId));
-
-    let rank = '';
-    let best = -1;
-    for (const r of cat.ranks) {
-      if (!held(r) || r.ord <= best) continue;
-      best = r.ord;
-      rank = r.slug;
-    }
-
-    const orgs = cat.factions.filter((f) => !f.base && held(f));
-    const org = orgs.length === 1 ? orgs[0] : null;
-
-    const posts = org ? org.posts.filter((p) => held(p)).map((p) => p.slug) : [];
-    let frank = '';
-    if (org) {
-      let fbest = -1;
-      for (const q of org.ranks) {
-        if (!held(q) || q.ord <= fbest) continue;
-        fbest = q.ord;
-        frank = q.slug;
-      }
-    }
-    const traits = cat.traits.filter((t) => held(t)).map((t) => t.slug);
-    const anything = !!(rank || org || traits.length || cat.factions.some((f) => f.base && held(f)));
-
-    return { org: org ? org.slug : '', frank, rank, posts, traits, anything, conflict: orgs.length > 1 ? orgs.map((f) => f.slug) : [] };
-  }
-
-  importedAt() {
-    return this.store.metaGet(IMPORTED) || '';
-  }
-
-  markImported() {
-    this.store.metaSet(IMPORTED, new Date().toISOString());
   }
 
   // ---- the roster for the game -------------------------------------------

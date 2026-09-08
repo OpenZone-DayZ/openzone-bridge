@@ -372,45 +372,6 @@ export class RolesMirror {
     this.log.log(`[roles] mirror fill: ${pushed} member(s) set, ${skipped} unchanged or unlinked, ${failed} failed${note ? ' (' + note + ')' : ''}`);
     return { ok: failed === 0, why: failed ? 'Discord refused some members - see the bot log' : '', pushed, skipped, failed, note };
   }
-
-  // ---- the one-time import -----------------------------------------------
-
-  // First start after the move (R7.10): the guild's roles, as the old
-  // registry read them, become rows. Once. The marker is set only after a
-  // real attempt against a real guild, so a start without the bot
-  // connected imports on the next one instead of never.
-  async importIfNeeded(guild) {
-    if (this.roles.importedAt()) return { done: false, members: 0 };
-    if (!guild) return { done: false, members: 0 };
-
-    let members = 0;
-    if (this.roles.memberCount() === 0) {
-      try {
-        await guild.members.fetch();
-      } catch {
-        // The cache will have to do.
-      }
-      const rows = [];
-      for (const l of this.store.linksAll()) {
-        const member = guild.members.cache.get(l.discordId);
-        if (!member) continue;
-        const r = this.roles.resolveFromRoles((id) => member.roles.cache.has(id));
-        if (!r.anything) continue;
-        if (r.conflict.length) {
-          this.log.warn(`[roles] import: ${member.user?.tag || l.discordId} wears ${r.conflict.join(' and ')} - neither is taken`);
-        }
-        rows.push({ steamId: l.steamId, org: r.org, frank: r.frank, rank: r.rank, posts: r.posts, traits: r.traits });
-      }
-      this.store.tx(() => {
-        for (const row of rows) this.store.memberSet(row);
-      });
-      members = rows.length;
-    }
-
-    this.roles.markImported();
-    this.log.log(`[roles] imported ${this.roles.factions().length} factions, ${members} members from Discord`);
-    return { done: true, members };
-  }
 }
 
 // Discord's refusals, in words somebody can act on.
