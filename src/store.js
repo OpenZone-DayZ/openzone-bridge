@@ -1,22 +1,14 @@
 // Everything the bridge has to remember between restarts -- in SQLite.
 //
-// This used to be one JSON document (state/bridge.json) rewritten whole on
-// every change. TZ-2 R6.1 names the three things that document could not do
-// and this can: a tail read from a cursor without loading everything, a write
+// TZ-2 R6.1: a tail read from a cursor without loading everything, a write
 // that is atomic without a .tmp-and-rename per line, and no ring buffer that
 // quietly eats the oldest record. Since chat's HOME moved here (TZ-2 slice
 // 1в) the last one stopped being a nicety: a line sent with the mirror off
 // exists in this file and nowhere else in the world.
 //
-//
 // node:sqlite, not a native module: it ships with Node 24 and there is nothing
-// to compile on the host. Synchronous, like the JSON store was -- the bridge
-// is a single event loop and every write here is a few microseconds.
-//
-// Migration from the JSON document is a MANUAL step with a report
-// (scripts/migrate-json-to-sqlite.mjs), never something the bot does on its
-// own at start (TZ-2 R6.2). index.js refuses to start beside an unmigrated
-// document rather than quietly begin with an empty memory.
+// to compile on the host. Synchronous -- the bridge is a single event loop
+// and every write here is a few microseconds.
 
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
@@ -847,79 +839,6 @@ export class Store {
     return Number(this.#meta('cursor')) || 0;
   }
 
-  // Nothing remembered yet: what a fresh database looks like, and what an
-  // unmigrated one looks like too -- index.js tells them apart by whether
-  // the old document is still lying beside it.
-  isEmpty() {
-    const n = (sql) => this.db.prepare(sql).get().n;
-    return n('SELECT COUNT(*) AS n FROM links') === 0
-      && n('SELECT COUNT(*) AS n FROM convos') === 0
-      && n('SELECT COUNT(*) AS n FROM messages') === 0
-      && n('SELECT COUNT(*) AS n FROM news') === 0;
-  }
-
-  // ---- migration from the JSON document (TZ-2 R6.2) ----
-  //
-  // Raw inserts, one transaction, existing rows left alone: run twice, the
-  // second run reports zeros and changes nothing. Cursors are kept as they
-  // were, because the game holds the last one it saw and asks for "newer".
-  importJson(data) {
-    const rep = { links: 0, names: 0, convos: 0, invites: 0, news: 0, messages: 0, guild: 0, skipped: 0, cursor: 0 };
-    const ins = {
-      link: this.db.prepare('INSERT OR IGNORE INTO links(steam_id, discord_id, discord_name, linked_at) VALUES (?, ?, ?, ?)'),
-      name: this.db.prepare('INSERT OR IGNORE INTO names(steam_id, name) VALUES (?, ?)'),
-      convo: this.db.prepare('INSERT OR IGNORE INTO convos(key, json) VALUES (?, ?)'),
-      inv: this.db.prepare('INSERT OR IGNORE INTO invites(key, uid, from_uid, at) VALUES (?, ?, ?, ?)'),
-      news: this.db.prepare('INSERT OR IGNORE INTO news(id, ts, json) VALUES (?, ?, ?)'),
-      msg: this.db.prepare('INSERT OR IGNORE INTO messages(cursor, key, id, at, text, in_discord, json) VALUES (?, ?, ?, ?, ?, ?, ?)'),
-      guild: this.db.prepare('INSERT OR IGNORE INTO guild(key, id) VALUES (?, ?)'),
-    };
-    const count = (r, field) => { if (r.changes > 0) rep[field]++; else rep.skipped++; };
-
-    this.#tx(() => {
-      for (const [sid, l] of Object.entries(data.links || {}))
-        count(ins.link.run(sid, String(l.discordId || ''), String(l.discordName || ''), String(l.linkedAt || '')), 'links');
-      for (const [sid, name] of Object.entries(data.names || {}))
-        count(ins.name.run(sid, String(name)), 'names');
-      for (const [key, c] of Object.entries(data.convos || {}))
-        count(ins.convo.run(key, JSON.stringify(c)), 'convos');
-      for (const [key, m] of Object.entries(data.invites || {}))
-        for (const [uid, inv] of Object.entries(m || {}))
-          count(ins.inv.run(key, uid, String(inv.from || ''), String(inv.at || '')), 'invites');
-      for (const [id, p] of Object.entries(data.news || {}))
-        count(ins.news.run(String(id), Number(p.ts) || 0, JSON.stringify(p)), 'news');
-      for (const [key, id] of Object.entries(data.guild || {}))
-        count(ins.guild.run(key, String(id)), 'guild');
-
-      // Lines without a cursor (there should be none) get fresh ones after
-      // the highest known, so the counter stays monotonic.
-      let top = Number(data.cursor) || 0;
-      const late = [];
-      for (const [key, list] of Object.entries(data.messages || {})) {
-        for (const m of list || []) {
-          if (typeof m.cursor === 'number' && m.cursor > 0) {
-            count(ins.msg.run(m.cursor, key, String(m.id), String(m.at ?? ''), typeof m.text === 'string' ? m.text : '',
-              m.inDiscord === false ? 0 : 1, JSON.stringify(m)), 'messages');
-            if (m.cursor > top) top = m.cursor;
-          } else {
-            late.push([key, m]);
-          }
-        }
-      }
-      for (const [key, m] of late) {
-        top++;
-        const stored = { ...m, cursor: top };
-        count(ins.msg.run(top, key, String(m.id), String(m.at ?? ''), typeof m.text === 'string' ? m.text : '',
-          m.inDiscord === false ? 0 : 1, JSON.stringify(stored)), 'messages');
-      }
-
-      const have = Number(this.#meta('cursor')) || 0;
-      if (top > have) this.#setMeta('cursor', top);
-      rep.cursor = Math.max(top, have);
-    });
-
-    return rep;
-  }
 }
 
 // A Discord message id, or '' for one of ours. Ours are "o" + digits by

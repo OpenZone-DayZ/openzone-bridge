@@ -77,8 +77,6 @@ const cfg = {
   secret: need('OZ_SHARED_SECRET'),
   // Under ten: see the note in http.js -- the game's request dies at 10 s.
   holdSeconds: Number(process.env.POLL_HOLD_SECONDS || 8),
-  // The old JSON document; read only to notice it has not been migrated.
-  statePath: process.env.BRIDGE_STATE || './state/bridge.json',
   // The store (TZ-2 R6.1). Path from .env, never logged (R6.3).
   dbPath: process.env.BRIDGE_DB || './state/bridge.sqlite',
   // Optional: a Discord role that counts as bridge admin alongside the
@@ -87,20 +85,6 @@ const cfg = {
 };
 
 const store = new Store(cfg.dbPath);
-
-// AN UNMIGRATED DOCUMENT BESIDE AN EMPTY DATABASE IS A STOP, NOT A START.
-//
-// TZ-2 R6.2 forbids migrating silently at start; starting empty would be the
-// other silent thing -- every link and every conversation key gone from the
-// bot's memory while the document that holds them sits a directory away.
-// So: say it, name the command, and exit. BRIDGE_DB_FRESH=1 is the explicit
-// "I mean it" for a host that truly starts over.
-if (existsSync(cfg.statePath) && store.isEmpty() && !process.env.BRIDGE_DB_FRESH) {
-  console.error('[store] the database is empty but an old state document exists beside it.');
-  console.error('[store] migrate first:  node scripts/migrate-json-to-sqlite.mjs');
-  console.error('[store] or, to really start over, set BRIDGE_DB_FRESH=1.');
-  process.exit(3);
-}
 
 // OUR OWN ID FOR A RECORD, and it is deliberately not Discord's (TZ-2 R6.4).
 //

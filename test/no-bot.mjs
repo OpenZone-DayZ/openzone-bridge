@@ -94,10 +94,6 @@ const child = spawn(process.execPath, ['src/index.js'], {
     OZ_SHARED_SECRET: SECRET,
     BRIDGE_PORT: String(port),
     BRIDGE_DB: db,
-    // The old JSON document may still sit beside the real database; this one
-    // is new by definition, and the refusal to start beside an unmigrated
-    // document is not what is under test here.
-    BRIDGE_DB_FRESH: '1',
     // The poll below is asserting a roster, not waiting for chat: hold it for
     // a second rather than the eight a real server wants.
     POLL_HOLD_SECONDS: '1',
