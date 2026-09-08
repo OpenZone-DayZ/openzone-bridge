@@ -1,5 +1,3 @@
-import { existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
 // OpenZone Bridge.
 //
 // DISCORD IS THE SOURCE OF TRUTH. The game does not keep conversations; it
@@ -141,9 +139,8 @@ const roles = new Roles(store);
 const rolesMirror = new RolesMirror(roles, store, { isOn: () => anyMirrored('roles') });
 discord.useRoles(roles);
 discord.useRolesMirror(rolesMirror);
-// The store is their home; the old file beside it is read once, if it is
-// still there, and never written again.
-const personas = new Personas(store, join(dirname(cfg.dbPath), 'personas.json'));
+// The store is their home.
+const personas = new Personas(store);
 discord.usePersonas(personas);
 
 // Реєстр мусить уміти спитати, чи прив'язаний акаунт: без цього роль на

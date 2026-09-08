@@ -5,23 +5,13 @@
 // wear any persona; a faction leader may wear the ones granted to his
 // faction; everyone else posts under their own linked game name only.
 //
-// KEPT IN THE STORE, like everything else the bridge remembers.
-//
-// This had its own JSON file next to the database, written with a plain
-// writeFileSync: a process that died mid-write left a torn file, the next
-// load read it, said so, and started EMPTY -- and the next grant overwrote
-// the file with that emptiness. Every grant an admin had ever made, gone,
-// with a warning nobody was watching for. The store writes atomically and
-// already holds a meta table for exactly this kind of small record.
-
-import { readFileSync, existsSync } from 'node:fs';
+// KEPT IN THE STORE, like everything else the bridge remembers -- one row
+// in its meta table, written atomically on every grant.
 
 const KEY = 'personas';
 
 export class Personas {
-  // `legacyPath`, when given, is the old state/personas.json: read once, on
-  // the first start after the move, and never written again.
-  constructor(store, legacyPath = '') {
+  constructor(store) {
     this.store = store;
     this.data = { version: 1, items: {} }; // name -> { factions: [slug], by, at }
 
@@ -33,22 +23,6 @@ export class Personas {
       } catch (err) {
         console.error(`[personas] the stored roster is unreadable (${err.message}); starting empty`);
       }
-      return;
-    }
-
-    if (legacyPath) this.#adopt(legacyPath);
-  }
-
-  #adopt(path) {
-    try {
-      if (!existsSync(path)) return;
-      const parsed = JSON.parse(readFileSync(path, 'utf8'));
-      if (!parsed || !parsed.items) return;
-      this.data = parsed;
-      this.#save();
-      console.log(`[personas] carried ${Object.keys(this.data.items).length} persona(s) from ${path} into the store`);
-    } catch (err) {
-      console.warn(`[personas] could not read ${path} (${err.message}); starting empty`);
     }
   }
 
