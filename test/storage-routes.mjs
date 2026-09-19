@@ -154,7 +154,7 @@ try {
   ] }), { ok: true, stored: 2 });
 
   // Refusals.
-  ok('a close naming a path is refused', await call('/v1/storage/close', { id: BOX, stamp: 'x', file: `../${BOX}-20260919-051530.bin`, roots: 1 }), { ok: false, why: 'bad file name' });
+  ok('a close naming a path is refused', (await call('/v1/storage/close', { id: BOX, stamp: 'x', file: `../${BOX}-20260919-051530.bin`, roots: 1 })).why.startsWith('bad file name'), true);
   ok('a close of a missing file is refused', (await call('/v1/storage/close', { id: BOX, stamp: 'x', file: `${BOX}-20260919-051531.bin`, roots: 1 })).ok, false);
   writeFileSync(join(xdir, `${BOX}-20260919-051532.bin`), bytes.subarray(0, 40));
   const broken = await call('/v1/storage/close', { id: BOX, stamp: 'x', file: `${BOX}-20260919-051532.bin`, roots: 3 });

@@ -53,7 +53,7 @@ export function storageRoutes({ store, xchg }) {
         xchg.dropCache(id);
         return { ok: true, version: r.version };
       }
-      if (!Xchg.closeName(name, id)) return bad('bad file name');
+      if (!Xchg.closeName(name, id)) return bad(`bad file name: ${name}`);
       let parsed;
       try {
         parsed = parseFile(xchg.readClose(name, id));
