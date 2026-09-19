@@ -4,9 +4,11 @@
 // 127.0.0.1, a throwaway web directory.
 
 import { request } from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import { storageWeb } from '../src/storage-web.js';
 
 let pass = 0;
@@ -143,6 +145,25 @@ console.log('web: a taken port');
   }
   ok('listen on a taken port rejects with the socket error, so the bridge can catch it', code, 'EADDRINUSE');
   await first.close();
+}
+
+console.log('web: the real page');
+{
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const real = storageWeb({ ops: {}, dir: join(root, 'web'), allowedHosts: [] });
+  const p = await real.listen(0);
+  const html = (await raw(p, 'GET', '/')).body;
+  ok('index.html loads the strings, the app and the stylesheet by relative paths', [html.includes('src="strings.js"'), html.includes('src="app.js"'), html.includes('href="app.css"')], [true, true, true]);
+  const sandbox = { window: {} };
+  runInNewContext(readFileSync(join(root, 'web', 'strings.js'), 'utf8'), sandbox);
+  const { uk, en } = sandbox.window.OZ_STR;
+  ok('every string exists in both languages', [Object.keys(uk).filter((k) => !(k in en)), Object.keys(en).filter((k) => !(k in uk))], [[], []]);
+  ok('no string is empty', Object.values(uk).concat(Object.values(en)).every((v) => typeof v === 'string' && v.trim() !== ''), true);
+  ok('the app talks to the api by a relative path and the custom header', (() => {
+    const js = readFileSync(join(root, 'web', 'app.js'), 'utf8');
+    return [js.includes("fetch(`admin/v1/${op}`"), js.includes("'x-oz-admin': '1'"), js.includes('fetch(\'/')];
+  })(), [true, true, false]);
+  await real.close();
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
