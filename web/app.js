@@ -207,8 +207,13 @@
     }
 
     function rootNode(nodes, rootIdx) {
-      const kids = (parent) => nodes.map((n, i) => [n, i]).filter(([n]) => n.parent === parent);
+      // Every node is drawn at most once: a parent index that points at
+      // itself, forward, or in a circle cannot recurse, and whatever no
+      // chain from the root reaches is listed under it as it is.
+      const seen = new Set();
+      const kids = (parent) => nodes.map((n, i) => [n, i]).filter(([n, i]) => n.parent === parent && !seen.has(i));
       const line = (n, i) => {
+        seen.add(i);
         const node = h('span', { class: `node${hit(n) ? ' hit' : ''}` },
           h('span', { class: 'type mono' }, n.type),
           n.quantity > 0 ? h('span', { class: 'dim' }, `×${num(n.quantity)}`) : null,
@@ -221,7 +226,11 @@
         const below = kids(i);
         return h('li', null, node, below.length ? h('ul', null, below.map(([k, ki]) => line(k, ki))) : null);
       };
-      return line(nodes[0], 0);
+      const top = line(nodes[0], 0);
+      const stray = nodes.map((n, i) => [n, i]).filter(([, i]) => !seen.has(i));
+      if (!stray.length) return top;
+      top.append(h('ul', null, stray.map(([k, ki]) => line(k, ki))));
+      return top;
     }
 
     // ---- tier 2 ----
@@ -458,16 +467,28 @@
   async function route() {
     const parts = location.hash.replace(/^#\/?/, '').split('/');
     const page = parts[0] || 'boxes';
-    const arg = decodeURIComponent(parts.slice(1).join('/'));
+    let arg = parts.slice(1).join('/');
+    try {
+      arg = decodeURIComponent(arg);
+    } catch (e) {
+      // a hand-typed address with a stray percent sign is used as typed
+    }
     paintHeader();
     if (me.auth && !me.name) return show(h('h2', null, s('title')), msg(s('sign_in_first')));
-    if (page === 'box' && arg) return boxView(arg);
-    if (page === 'history' && arg) return historyView(arg);
-    if (page === 'player') return playerView(arg);
-    if (page === 'find') return findView(arg);
-    if (page === 'shelf') return shelfView();
-    if (page === 'health') return healthView();
-    return boxesView();
+    const go = () => {
+      if (page === 'box' && arg) return boxView(arg);
+      if (page === 'history' && arg) return historyView(arg);
+      if (page === 'player') return playerView(arg);
+      if (page === 'find') return findView(arg);
+      if (page === 'shelf') return shelfView();
+      if (page === 'health') return healthView();
+      return boxesView();
+    };
+    try {
+      await go();
+    } catch (e) {
+      show(h('h2', null, s('title')), msg(`${s('error')}: ${e.message}`, true));
+    }
   }
   window.addEventListener('hashchange', route);
 
