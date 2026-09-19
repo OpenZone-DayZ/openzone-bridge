@@ -160,7 +160,7 @@ try {
   const broken = await call('/v1/storage/close', { id: BOX, stamp: 'x', file: `${BOX}-20260919-051532.bin`, roots: 3 });
   ok('a broken file is refused and discarded', [broken.ok, broken.why.startsWith('file refused'), existsSync(join(xdir, `${BOX}-20260919-051532.bin`))], [false, true, false]);
   ok('a bad box id is refused', await call('/v1/storage/open', { id: 'x' }), { ok: false, why: 'bad box id' });
-  ok('an unknown box cannot be opened', await call('/v1/storage/open', { id: '9-9-9-9' }), { ok: false, why: 'unknown box' });
+  ok('a box SQL has never seen opens as empty', await call('/v1/storage/open', { id: '9-9-9-9' }), { ok: true, empty: true });
   ok('an empty close needs no file', await call('/v1/storage/close', { id: '1-2-3-4', stamp: '2026-09-19 05:31:00', file: '', roots: 0, entities: 0, why: 'boot' }), { ok: true, version: 5 });
   ok('an empty box opens as empty', await call('/v1/storage/open', { id: '1-2-3-4' }), { ok: true, empty: true });
 } catch (e) {

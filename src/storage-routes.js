@@ -92,7 +92,13 @@ export function storageRoutes({ store, xchg }) {
       const id = boxId(Json);
       if (!id) return bad('bad box id');
       const box = store.boxOf(id);
-      if (!box || box.status === 'removed') return bad('unknown box');
+      if (box && box.status === 'removed') return bad('unknown box');
+      if (!box) {
+        // A box the engine has and SQL does not: new, and empty (design
+        // section 3.3, status none). Its first close makes its first version.
+        store.seen(id, { by: String(Json.by || '') });
+        return { ok: true, empty: true };
+      }
       if (box.status === 'open') console.warn(`[storage] open of ${id}, which SQL believed open already; the engine knows better`);
       const cur = store.currentChunks(id);
       if (!cur || cur.chunks.length === 0) return { ok: true, empty: true };
