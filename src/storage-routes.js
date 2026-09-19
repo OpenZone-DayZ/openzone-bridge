@@ -65,8 +65,13 @@ export function storageRoutes({ store, xchg }) {
         return bad(`the file holds ${parsed.header.roots} root(s), the request says ${roots}`);
       }
       const r = store.ingestClose({ boxId: id, header: parsed.header, chunks: parsed.roots.map((x) => x.bytes), by, why });
-      const size = xchg.promote(name, id);
-      store.cacheNote(id, parsed.header.stamp, size);
+      try {
+        const size = xchg.promote(name, id);
+        store.cacheNote(id, parsed.header.stamp, size);
+      } catch (e) {
+        console.warn(`[storage] close of ${id}: the file could not become the cache (${e.code || e.message}); it is rebuilt at the next open`);
+        xchg.discard(name);
+      }
       return { ok: true, version: r.version, roots: r.roots, entities: r.entities };
     },
 
@@ -106,17 +111,19 @@ export function storageRoutes({ store, xchg }) {
       if (!xchg) return off;
       const id = boxId(Json);
       if (!id) return bad('bad box id');
+      const root = Number(Json.root);
+      if (!Number.isInteger(root) || root < 0) return bad('bad root index');
       const reasons = ['refused', 'desync', 'no_room'];
       const why = String(Json.why || '');
       const r = store.park({
         boxId: id,
-        rootIdx: Number(Json.root),
+        rootIdx: root,
         reason: reasons.includes(why) ? why : 'refused',
         note: String(Json.type || ''),
       });
       if (!r) return bad('no such root of this box');
       xchg.dropCache(id);
-      console.log(`[storage] parked root ${Json.root} (${r.type}) of ${id}: ${why || 'refused'}`);
+      console.log(`[storage] parked root ${root} (${r.type}) of ${id}: ${why || 'refused'}`);
       return { ok: true, version: r.version, parked: r.parked, type: r.type };
     },
 

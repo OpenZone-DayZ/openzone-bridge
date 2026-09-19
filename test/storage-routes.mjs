@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { Store } from '../src/store.js';
 import { StorageStore } from '../src/storage-store.js';
 import { storageRoutes } from '../src/storage-routes.js';
-import { buildChunk, buildFile, parseFile, parseHeader } from '../src/storage-wire.js';
+import { buildChunk, buildFile, parseFile } from '../src/storage-wire.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const db = join(tmpdir(), `oz-storage-routes-${process.pid}.sqlite`);
@@ -133,6 +133,7 @@ try {
   // The engine could not read root 1: it parks it and asks again.
   const parked = await call('/v1/storage/park', { id: BOX, stamp: '2026-09-19 05:15:30', root: 1, type: 'PlateCarrierPouches', why: 'refused' });
   ok('park answers the new version', [parked.ok, parked.version, parked.type], [true, 2, 'PlateCarrierPouches']);
+  ok('a park without a root index is refused', await call('/v1/storage/park', { id: BOX, stamp: 'x', why: 'refused' }), { ok: false, why: 'bad root index' });
   ok('park drops the cache', existsSync(join(xdir, `${BOX}.bin`)), false);
   const again = await call('/v1/storage/open', { id: BOX, by: '76561198000000001' });
   ok('the next open rebuilds it with two roots', [again.ok, again.roots, again.entities], [true, 2, 2]);
