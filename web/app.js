@@ -227,9 +227,13 @@
         return h('li', null, node, below.length ? h('ul', null, below.map(([k, ki]) => line(k, ki))) : null);
       };
       const top = line(nodes[0], 0);
-      const stray = nodes.map((n, i) => [n, i]).filter(([, i]) => !seen.has(i));
-      if (!stray.length) return top;
-      top.append(h('ul', null, stray.map(([k, ki]) => line(k, ki))));
+      // Whatever no chain from the root reached, once each: `seen` is asked
+      // at every step, so an island a previous stray already drew is skipped.
+      const stray = h('ul', null);
+      nodes.forEach((n, i) => {
+        if (!seen.has(i)) stray.append(line(n, i));
+      });
+      if (stray.childElementCount) top.append(stray);
       return top;
     }
 
