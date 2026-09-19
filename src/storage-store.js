@@ -5,7 +5,7 @@
 // beside the chat tables, but in its own module: nothing here is chat.
 
 import { createHash } from 'node:crypto';
-import { parseChunk, stampNow, typesOf, unplace } from './storage-wire.js';
+import { buildChunk, parseChunk, stampNow, typesOf, unplace } from './storage-wire.js';
 
 const DDL = [
   `CREATE TABLE IF NOT EXISTS storage_boxes (
@@ -121,6 +121,8 @@ export class StorageStore {
       boxIds: q(`SELECT box_id FROM storage_boxes WHERE status != 'removed' ORDER BY box_id`),
       boxesLive: q(`SELECT box_id, status, current_version FROM storage_boxes
                     WHERE status != 'removed' AND current_version > 0 ORDER BY box_id`),
+      boxesAll: q(`SELECT b.*, COALESCE((SELECT v.roots FROM storage_versions v WHERE v.id = b.current_version), 0) AS roots
+                   FROM storage_boxes b ORDER BY b.box_id`),
 
       verIns: q(`INSERT INTO storage_versions(box_id, stamp, created_at, source, save_version, roots, entities, note)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
@@ -162,6 +164,7 @@ export class StorageStore {
       evOfBox: q('SELECT * FROM storage_events WHERE box_id = ? ORDER BY id DESC LIMIT ?'),
       evOfUid: q('SELECT * FROM storage_events WHERE uid = ? ORDER BY id DESC LIMIT ?'),
       evOld: q('DELETE FROM storage_events WHERE at < ?'),
+      evResult: q(`SELECT * FROM storage_events WHERE kind = 'admin_result' AND note LIKE ? ORDER BY id DESC LIMIT 1`),
     };
   }
 
@@ -446,5 +449,78 @@ export class StorageStore {
       const events = this.q.evOld.run(cutoff(eventsDays)).changes;
       return { versions: old.length, blobs: Number(blobs), events: Number(events) };
     });
+  }
+
+  // ---- the admin side (design sections 4.4, 4.5, 8) ----
+
+  boxes() {
+    return this.q.boxesAll.all();
+  }
+
+  // One parked root back into its box, unplaced; only into a closed box.
+  unparkOne(parkedId, at = stampNow(), note = '') {
+    const p = this.q.parkGet.get(parkedId);
+    if (!p) return { ok: false, why: 'no such parked root' };
+    if (p.restored_at) return { ok: false, why: 'already returned' };
+    const box = this.boxOf(p.box_id);
+    if (!box || box.status === 'removed') return { ok: false, why: 'the box is gone' };
+    if (box.status !== 'closed') return { ok: false, why: 'the box is open; close it first' };
+    const blob = this.q.blobGet.get(p.hash);
+    if (!blob) return { ok: false, why: 'the bytes of the root are gone' };
+    const cur = this.currentChunks(p.box_id);
+    const chunks = cur ? cur.chunks : [];
+    const { version } = this.#tx(() => {
+      const v = this.#newVersion(p.box_id, [...chunks, unplace(asBuffer(blob.bytes))], {
+        at, source: 'unpark', saveVer: cur ? cur.saveVer : 0, note: note || `parked ${p.id} (${p.type})`,
+      });
+      this.q.parkDone.run(at, p.id);
+      return v;
+    });
+    return { ok: true, version, boxId: p.box_id, type: p.type };
+  }
+
+  // A parked root thrown away for good; its bytes go with the next keep.
+  discardParked(parkedId) {
+    const p = this.q.parkGet.get(parkedId);
+    if (!p) return { ok: false, why: 'no such parked root' };
+    if (p.restored_at) return { ok: false, why: 'already returned' };
+    this.q.parkDel.run(parkedId);
+    return { ok: true, boxId: p.box_id, type: p.type };
+  }
+
+  // A new root without a body: the engine creates it in a free cell with the
+  // descriptor's state (health 0 = the class default). Closed boxes only.
+  give(boxId, type, quantity = 0, { at = stampNow(), admin = '' } = {}) {
+    const box = this.boxOf(boxId);
+    if (!box || box.status === 'removed') return { ok: false, why: 'unknown box' };
+    if (box.status !== 'closed') return { ok: false, why: 'the box is open; close it first' };
+    if (!/^[A-Za-z0-9_]{1,64}$/.test(String(type))) return { ok: false, why: 'bad class name' };
+    const chunk = buildChunk([{
+      parent: -1, type: String(type), locType: 3, slot: -1, row: -1, col: -1, flip: 0,
+      health: 0, quantity: Number(quantity) || 0, liquid: 0, ammo: 0, hasBlob: 0,
+    }]);
+    const cur = this.currentChunks(boxId);
+    const chunks = cur ? cur.chunks : [];
+    const { version } = this.#tx(() => this.#newVersion(boxId, [...chunks, chunk], {
+      at, source: 'admin', saveVer: cur ? cur.saveVer : 0, note: `give ${type}${admin ? ` by ${admin}` : ''}`,
+    }));
+    return { ok: true, version };
+  }
+
+  // A closed box emptied: a version with no roots.
+  empty(boxId, { at = stampNow(), admin = '' } = {}) {
+    const box = this.boxOf(boxId);
+    if (!box || box.status === 'removed') return { ok: false, why: 'unknown box' };
+    if (box.status !== 'closed') return { ok: false, why: 'the box is open; close it first' };
+    const { version } = this.#tx(() => this.#newVersion(boxId, [], {
+      at, source: 'admin', saveVer: 0, note: `empty${admin ? ` by ${admin}` : ''}`,
+    }));
+    return { ok: true, version };
+  }
+
+  // The engine's answer to a live command, by the ref the command carried.
+  resultOf(ref) {
+    if (!ref) return null;
+    return this.q.evResult.get(`${ref}: %`) || null;
   }
 }

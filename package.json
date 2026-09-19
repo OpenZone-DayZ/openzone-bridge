@@ -9,7 +9,7 @@
     "start": "node src/index.js",
     "check": "node scripts/check.mjs",
     "pretest": "node scripts/check-test-list.mjs",
-    "test": "node --test test/chat-history.mjs test/group-invites.mjs test/mirror-fill.mjs test/news-home.mjs test/no-bot.mjs test/older-authorship.mjs test/persona-voices.mjs test/roles-sql.mjs test/store-retention.mjs test/storage-wire.mjs test/storage-store.mjs test/storage-xchg.mjs test/storage-routes.mjs",
+    "test": "node --test test/chat-history.mjs test/group-invites.mjs test/mirror-fill.mjs test/news-home.mjs test/no-bot.mjs test/older-authorship.mjs test/persona-voices.mjs test/roles-sql.mjs test/store-retention.mjs test/storage-wire.mjs test/storage-store.mjs test/storage-xchg.mjs test/storage-routes.mjs test/storage-admin.mjs",
     "test:live": "node test/roundtrip.mjs"
   },
   "engines": {
