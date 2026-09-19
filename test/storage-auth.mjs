@@ -84,5 +84,22 @@ ok('under http the cookie is not marked Secure and home is the root', [plain.coo
 const dead = storageAuth({ clientId: 'C', clientSecret: 'S', guildId: 'G', roleIds: ['1'], adminUrl: 'https://admin.example', fetch: async () => { throw new Error('ENOTFOUND'); } });
 ok('Discord unreachable is a refusal in words', await dead.callback('good', new URL(dead.loginUrl()).searchParams.get('state')), { ok: false, why: 'Discord did not answer: ENOTFOUND' });
 
+let failOn = '';
+const flaky = async (url, init = {}) => {
+  if (failOn && url.includes(failOn)) throw new Error('ETIMEDOUT');
+  if (url.endsWith('/users/@me') && failOn === 'status') return answer(500, {});
+  return fakeFetch(url, init);
+};
+const shaky = storageAuth({ clientId: 'C', clientSecret: 'S', guildId: 'G', roleIds: ['333'], adminUrl: 'https://admin.example', fetch: flaky });
+const shakyState = () => new URL(shaky.loginUrl()).searchParams.get('state');
+failOn = '/users/@me/guilds';
+ok('Discord unreachable on the member call is the same refusal', await shaky.callback('good', shakyState()), { ok: false, why: 'Discord did not answer: ETIMEDOUT' });
+failOn = 'users/@me';
+ok('and on the identity call too', await shaky.callback('good', shakyState()), { ok: false, why: 'Discord did not answer: ETIMEDOUT' });
+failOn = 'status';
+ok('a refused identity names the status and nothing internal', await shaky.callback('good', shakyState()), { ok: false, why: 'Discord refused the identity (500)' });
+failOn = '';
+ok('and with Discord back the same sign-in goes through', (await shaky.callback('good', shakyState())).ok, true);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

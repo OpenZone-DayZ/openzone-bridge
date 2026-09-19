@@ -41,7 +41,11 @@ export function storageAuth({ clientId, clientSecret, guildId, roleIds, adminUrl
 
   async function asUser(path, token) {
     const r = await fetch(`${API}${path}`, { headers: { authorization: `Bearer ${token}` } });
-    if (!r.ok) throw new Error(`discord ${path}: ${r.status}`);
+    if (!r.ok) {
+      const err = new Error(`discord ${path}: ${r.status}`);
+      err.status = r.status;
+      throw err;
+    }
     return r.json();
   }
 
@@ -96,13 +100,20 @@ export function storageAuth({ clientId, clientSecret, guildId, roleIds, adminUrl
       if (!traded.ok) return { ok: false, why: `Discord refused the code (${traded.status})` };
       const token = (await traded.json()).access_token;
       if (!token) return { ok: false, why: 'Discord sent no token' };
+      // A refused answer and no answer at all are told apart by the status
+      // the error carries: the first is Discord's word, the second the network's.
+      const unreachable = (e) => `Discord did not answer: ${e.message}`;
       let user;
-      let member;
       try {
         user = await asUser('/users/@me', token);
+      } catch (e) {
+        return { ok: false, why: e.status ? `Discord refused the identity (${e.status})` : unreachable(e) };
+      }
+      let member;
+      try {
         member = await asUser(`/users/@me/guilds/${guildId}/member`, token);
       } catch (e) {
-        return { ok: false, why: e.message.includes('/member') ? 'you are not in the guild' : e.message };
+        return { ok: false, why: e.status ? 'you are not in the guild' : unreachable(e) };
       }
       const held = Array.isArray(member.roles) ? member.roles.map(String) : [];
       if (!held.some((r) => roles.has(r))) return { ok: false, why: 'not an admin' };
