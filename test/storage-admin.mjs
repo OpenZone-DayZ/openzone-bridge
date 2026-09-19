@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { Store } from '../src/store.js';
 import { StorageStore } from '../src/storage-store.js';
 import { Xchg } from '../src/storage-xchg.js';
-// import { storageAdmin } from '../src/storage-admin.js';
+import { storageAdmin } from '../src/storage-admin.js';
 import { buildChunk, parseChunk } from '../src/storage-wire.js';
 
 const path = join(tmpdir(), `oz-storage-admin-${process.pid}.sqlite`);
@@ -78,6 +78,46 @@ s.markClosed(BOX);
 s.events([{ at: '2026-09-19 07:06:00', kind: 'admin_result', box: BOX, name: 'owner', note: 'abc123: ok CLOSED entities=0' }], 'stand');
 ok('resultOf finds the answer by its ref', s.resultOf('abc123').note, 'abc123: ok CLOSED entities=0');
 ok('resultOf of an unknown ref is null', s.resultOf('nope'), null);
+
+console.log('admin ops');
+
+const pushed = [];
+const x = new Xchg(dir);
+const admin = storageAdmin({ store: s, xchg: x, push: (o) => pushed.push(o) });
+
+s.ingestClose({ boxId: BOX, header: header('2026-09-19 07:10:00'), chunks: [c0, c1], at: '2026-09-19 07:10:01' });
+writeFileSync(x.cachePath(BOX), 'cache');
+ok('boxes', admin.boxes().boxes.map((b) => b.box_id), [BOX]);
+ok('box', Object.keys(admin.box({ id: BOX })).sort(), ['box', 'items', 'ok', 'versions']);
+ok('box of an unknown id', admin.box({ id: '9-9-9-9' }), { ok: false, why: 'unknown box' });
+ok('find', admin.find({ type: 'Paper' }).items.length, 1);
+ok('parked', admin.parked().parked.length, 0);
+
+const target = s.versionsOf(BOX).find((v) => v.roots === 0).id;
+const rb = admin.rollback({ id: BOX, version: target, admin: 'owner' });
+ok('rollback answers the new version', [rb.ok, rb.version > target], [true, true]);
+ok('rollback drops the cache', existsSync(x.cachePath(BOX)), false);
+ok('rollback is an event with the admin', s.eventsOf(BOX)[0].kind + ' ' + s.eventsOf(BOX)[0].admin, 'admin_rollback owner');
+ok('rollback of a wrong version is refused in words', admin.rollback({ id: BOX, version: 1, admin: 'owner' }).ok, true);
+
+const g = admin.give({ id: BOX, type: 'Rag', qty: 2, admin: 'owner' });
+ok('give', [g.ok, s.currentChunks(BOX).roots], [true, 3]);
+ok('give is an event', s.eventsOf(BOX)[0].kind, 'admin_give');
+const p = s.park({ boxId: BOX, rootIdx: 0, reason: 'admin', at: '2026-09-19 07:11:00' });
+ok('unpark by id', admin.unpark({ parked: p.parked, admin: 'owner' }).ok, true);
+const p2 = s.park({ boxId: BOX, rootIdx: 0, reason: 'admin', at: '2026-09-19 07:12:00' });
+ok('discard by id', admin.discard({ parked: p2.parked, admin: 'owner' }), { ok: true, boxId: BOX, type: 'PlateCarrierPouches' });
+ok('empty', admin.empty({ id: BOX, admin: 'owner' }).ok, true);
+ok('version lists the roots of any version', admin.version({ version: target + 1 }).roots.length > 0, true);
+
+const live = admin.close({ id: BOX, admin: 'owner' });
+ok('a live command is pushed with a ref', [live.ok, live.ref.length, pushed.length, pushed[0].cmd, pushed[0].id, pushed[0].by, pushed[0].ref === live.ref], [true, 12, 1, 'close', BOX, 'owner', true]);
+ok('a live command is an event', s.eventsOf(BOX)[0].kind, 'admin_close');
+ok('report and remove push too', [admin.report({ id: BOX, admin: 'owner' }).ok, admin.remove({ id: BOX, admin: 'owner' }).ok, pushed.length], [true, true, 3]);
+ok('a live command on an unknown box is refused', admin.close({ id: '9-9-9-9', admin: 'owner' }), { ok: false, why: 'unknown box' });
+ok('result of an unanswered ref is null', admin.result({ ref: live.ref }), { ok: true, result: null });
+s.events([{ at: '2026-09-19 07:13:00', kind: 'admin_result', box: BOX, note: `${live.ref}: ok closing` }], 'stand');
+ok('result of an answered ref is the event', admin.result({ ref: live.ref }).result.note, `${live.ref}: ok closing`);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();
