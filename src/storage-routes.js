@@ -167,7 +167,12 @@ export function storageRoutes({ store, xchg, admin }) {
       const op = String(Json?.op || '');
       const fn = Object.prototype.hasOwnProperty.call(admin, op) ? admin[op] : null;
       if (typeof fn !== 'function') return bad(`unknown op: ${op}`);
-      return fn({ ...Json, admin: String(Json?.admin || 'cli') });
+      try {
+        return await fn({ ...Json, admin: String(Json?.admin || 'cli') });
+      } catch (e) {
+        console.warn(`[storage] admin ${op}: ${e.message}`);
+        return bad(`${op} failed: ${e.message}`);
+      }
     },
   };
 }

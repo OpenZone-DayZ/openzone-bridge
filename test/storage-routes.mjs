@@ -169,6 +169,7 @@ try {
   const boxes = await call('/v1/storage/admin', { op: 'boxes' });
   ok('admin boxes', [boxes.ok, boxes.boxes.map((b) => b.box_id).includes(BOX)], [true, true]);
   ok('admin unknown op', await call('/v1/storage/admin', { op: 'nope' }), { ok: false, why: 'unknown op: nope' });
+  ok('an admin op given a bad argument is refused in words rather than throwing', (await call('/v1/storage/admin', { op: 'unpark', parked: 'x' })).ok, false);
   await call('/v1/storage/open', { id: BOX, by: '' });
   ok('the cache exists before the rollback', existsSync(join(xdir, `${BOX}.bin`)), true);
   const rb = await call('/v1/storage/admin', { op: 'rollback', id: BOX, version: 1, admin: 'owner' });
