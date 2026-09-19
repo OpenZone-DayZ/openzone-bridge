@@ -25,6 +25,10 @@ window.OZ_STR = {
     c_edit: 'Change {type} in box {id}?', c_edit_reset: 'Change {type} in box {id} and reset the mod state of its whole item tree?',
     c_return: 'Return {type} to box {id}?', c_discard: 'Throw {type} away for good?', c_give: 'Give {type} ×{qty} to box {id}?',
     new_version: 'New version {v}.', two_versions: 'Versions {a} and {b}.',
+    live_report: 'Report from the game', live_close: 'Close now', live_remove: 'Remove from the world',
+    live_sent: 'Sent to the game, waiting for the answer…', live_answer: 'The game answered:',
+    live_silent: 'No answer within 12 s; the game polls the bridge every few seconds — try again in a moment.',
+    c_close: 'Close box {id} now and drop its viewers?', c_remove: 'Remove box {id} from the world? Its history stays in the database.',
   },
   uk: {
     title: 'Сховище OpenZone',
@@ -48,5 +52,9 @@ window.OZ_STR = {
     c_edit: 'Змінити {type} у ящику {id}?', c_edit_reset: 'Змінити {type} у ящику {id} і скинути стан мода всього його дерева предметів?',
     c_return: 'Повернути {type} до ящика {id}?', c_discard: 'Викинути {type} назавжди?', c_give: 'Видати {type} ×{qty} до ящика {id}?',
     new_version: 'Нова версія {v}.', two_versions: 'Версії {a} та {b}.',
+    live_report: 'Звіт з гри', live_close: 'Зачинити зараз', live_remove: 'Прибрати зі світу',
+    live_sent: 'Надіслано в гру, чекаю відповіді…', live_answer: 'Гра відповіла:',
+    live_silent: 'Відповіді немає 12 с; гра опитує міст раз на кілька секунд — спробуйте за хвилину.',
+    c_close: 'Зачинити ящик {id} зараз і відключити глядачів?', c_remove: 'Прибрати ящик {id} зі світу? Його історія лишається в базі.',
   },
 };

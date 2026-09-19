@@ -131,8 +131,11 @@ difference between any version and the current one; a player's takings; a class
 across the server and who took it last; the shelf of parked roots; the bridge's
 health. Changes to a closed box -- rollback, shelf, move, edit, give, empty, return
 or throw away a parked root -- ask for confirmation, take effect at the box's next
-open, and are events with the admin's name. Plain HTML and JavaScript out of `web/`,
-Ukrainian and English by a switch in the header, no build step.
+open, and are events with the admin's name. Three live buttons on a box's page —
+a report from the game, close now, remove from the world — go to the game through
+the bridge's poll and show the game's answer within seconds. Plain HTML and
+JavaScript out of `web/`, Ukrainian and English by a switch in the header, no
+build step.
 
 Sign-in is optional and turns on with `ADMIN_URL`, the page's address as a browser
 sees it. Without it the page has no sign-in and asks for a name to sign the log

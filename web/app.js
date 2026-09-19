@@ -313,6 +313,30 @@
       }
     }
 
+    // ---- tier 3: live commands, answered by the game through the bridge ----
+    const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    async function live(op, confirmKey, after) {
+      if (confirmKey && !(await ask(confirmKey, { id }))) return;
+      const sent = await act(op, { id });
+      if (!sent) return;
+      const waiting = msg(s('live_sent'));
+      view.prepend(waiting);
+      let answer = null;
+      for (let i = 0; i < 12 && !answer; i++) {
+        await pause(1000);
+        const r = await api('result', { ref: sent.ref });
+        if (r.ok && r.result) answer = r.result;
+      }
+      waiting.remove();
+      if (!answer) {
+        notice(s('live_silent'), true);
+        return;
+      }
+      const note = String(answer.note || '').replace(/^[0-9a-f]{12}: /, '');
+      if (after) await after(note);
+      notice(`${s('live_answer')} ${note}`, !/^ok\b/.test(note));
+    }
+
     const filterInput = h('input', { placeholder: s('filter'), size: 24 });
     filterInput.addEventListener('input', () => {
       filter = filterInput.value.trim().toLowerCase();
@@ -323,6 +347,10 @@
       h('button', { type: 'button', class: 'danger', disabled: !closed, onclick: empty }, s('empty')),
       link(`#/history/${id}`, s('history')),
       closed ? null : h('span', { class: 'dim' }, s('closed_only'))));
+    actions.append(h('div', { class: 'row' },
+      h('button', { type: 'button', onclick: () => live('report') }, s('live_report')),
+      box.status === 'open' ? h('button', { type: 'button', class: 'danger', onclick: () => live('close', 'c_close', async () => { await pause(1500); await again(); }) }, s('live_close')) : null,
+      closed ? h('button', { type: 'button', class: 'danger', onclick: () => live('remove', 'c_remove', async (note) => { if (/^ok\b/.test(note)) location.hash = '#/boxes'; }) }, s('live_remove')) : null));
 
     show(title,
       h('div', { class: 'panel stat' },
