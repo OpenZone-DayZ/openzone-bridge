@@ -83,6 +83,75 @@ s.removed(BOX, '2026-09-19 05:04:00');
 ok('a removed box leaves knownIds', s.knownIds(), []);
 ok('but keeps its versions', s.versionsOf(BOX).length, 3);
 
+console.log('parking');
+
+const P = '1-2-3-4';
+s.seen(P, { class: 'OZ_StorageBox_Small', at: '2026-09-19 06:00:00' });
+const pc0 = buildChunk([paper(0, 0)], Buffer.from('01', 'hex'));
+const pc1 = buildChunk(pouch, Buffer.from('02', 'hex'));
+const pc2 = buildChunk([paper(0, 1)], Buffer.from('03', 'hex'));
+s.ingestClose({ boxId: P, header: header('2026-09-19 06:00:10'), chunks: [pc0, pc1, pc2], at: '2026-09-19 06:00:11' });
+
+const parked = s.park({ boxId: P, rootIdx: 1, reason: 'refused', at: '2026-09-19 06:01:00', note: 'OnStoreLoad refused' });
+ok('parking a root makes a new version without it', [parked.type, s.currentChunks(P).chunks.map(hex)], ['PlateCarrierPouches', [hex(pc0), hex(pc2)]]);
+ok('the new version says park', s.versionsOf(P)[0].source, 'park');
+ok('the parked row keeps the types of the subtree', s.parked(P).map((p) => [p.reason, p.type, JSON.parse(p.types)]),
+  [['refused', 'PlateCarrierPouches', ['PlateCarrierPouches', 'SmallProtectorCase']]]);
+ok('parking out of range is null', s.park({ boxId: P, rootIdx: 7, reason: 'desync' }), null);
+ok('the class list still names the parked classes', s.classes().includes('SmallProtectorCase'), true);
+
+const missing = s.parkMissing(['Paper'], '2026-09-19 06:02:00');
+ok('a missing class parks every root that holds it', [missing.parked, missing.boxes], [2, [P]]);
+ok('the box is left with no roots', s.currentChunks(P).chunks.length, 0);
+ok('nothing to park is nothing', s.parkMissing(['Paper']), { parked: 0, boxes: [] });
+
+const back = s.unparkPresent(['Paper', 'PlateCarrierPouches'], '2026-09-19 06:03:00');
+ok('only roots whose every class is present come back', [back.unparked, back.boxes], [2, [P]]);
+ok('they come back unplaced, body intact', s.currentChunks(P).chunks.map((c) => [parseChunk(c).nodes[0].type, parseChunk(c).nodes[0].row, hex(c.subarray(parseChunk(c).bodyOffset))]),
+  [['Paper', -1, '01'], ['Paper', -1, '03']]);
+ok('the pouch waits for its case', s.parked(P).map((p) => p.type), ['PlateCarrierPouches']);
+const back2 = s.unparkPresent(['Paper', 'PlateCarrierPouches', 'SmallProtectorCase']);
+ok('and comes back once the case exists', [back2.unparked, s.parked(P).length, s.currentChunks(P).chunks.length], [1, 0, 3]);
+
+console.log('rollback');
+
+const target = s.versionsOf(P).find((v) => v.source === 'park' && v.roots === 2).id;
+ok('rollback to a past version is a new version with its roots', s.rollback(P, target, { at: '2026-09-19 06:04:00', admin: 'owner' }).ok, true);
+ok('with the same chunks', s.currentChunks(P).chunks.map(hex), [hex(pc0), hex(pc2)]);
+ok('and the source says so', [s.versionsOf(P)[0].source, s.versionsOf(P)[0].note], ['rollback', `from ${target} by owner`]);
+ok('rollback to another box\'s version is refused', s.rollback(P, 1, {}).ok, false);
+s.markOpen(P);
+ok('rollback of an open box is refused', s.rollback(P, target, {}), { ok: false, why: 'the box is open; close it first' });
+s.markClosed(P);
+
+console.log('events');
+
+const n = s.events([
+  { at: '2026-09-19 06:05:00', kind: 'placed', box: '5-6-7-8', uid: '76561198000000002', name: 'Сидорович', type: 'OZ_StorageBox_Small', note: '4650 339 10400' },
+  { at: '2026-09-19 06:05:10', kind: 'put', box: '5-6-7-8', uid: '76561198000000002', name: 'Сидорович', type: 'AKM', qty: 1, row: 3, col: 0 },
+  { at: '2026-09-19 06:05:20', kind: 'take', box: '5-6-7-8', uid: '76561198000000002', name: 'Сидорович', type: 'AKM', qty: 1, row: 3, col: 0, note: 'mag=30' },
+  { at: '2026-09-19 06:05:30', kind: 'removed', box: '5-6-7-8', uid: '' },
+  { kind: '' },
+], 'stand');
+ok('four of five events are stored', n, 4);
+ok('placed made the box known', [s.boxOf('5-6-7-8').class, s.boxOf('5-6-7-8').placed_by, s.boxOf('5-6-7-8').pos], ['OZ_StorageBox_Small', '76561198000000002', '4650 339 10400']);
+ok('removed marked it', s.boxOf('5-6-7-8').status, 'removed');
+ok('events by box, newest first', s.eventsOf('5-6-7-8').map((e) => [e.kind, e.type, e.qty, e.note, e.server_id]),
+  [['removed', '', 0, '', 'stand'], ['take', 'AKM', 1, 'mag=30', 'stand'], ['put', 'AKM', 1, '', 'stand'], ['placed', 'OZ_StorageBox_Small', 0, '4650 339 10400', 'stand']]);
+ok('events by player', s.eventsBy('76561198000000002').map((e) => e.kind), ['take', 'put', 'placed']);
+
+console.log('keep');
+
+const now = new Date(Date.UTC(2026, 9, 19, 0, 0, 0)); // a month later
+const before = base.db.prepare('SELECT COUNT(*) AS n FROM storage_blobs').get().n;
+const kept = s.keep({ versionsDays: 14, eventsDays: 90, now });
+ok('old versions go, the current ones stay', [kept.versions > 0, s.versionsOf(P).length, s.versionsOf(BOX).length], [true, 1, 1]);
+ok('blobs nobody references go with them', kept.blobs > 0 && base.db.prepare('SELECT COUNT(*) AS n FROM storage_blobs').get().n < before, true);
+ok('events inside the window stay', [kept.events, s.eventsOf('5-6-7-8').length], [0, 4]);
+const later = s.keep({ versionsDays: 14, eventsDays: 1, now });
+ok('events past the window go', [later.events, s.eventsOf('5-6-7-8').length], [4, 0]);
+ok('the current version is still readable', s.currentChunks(P).chunks.map(hex), [hex(pc0), hex(pc2)]);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();
 process.exit(fail ? 1 : 0);

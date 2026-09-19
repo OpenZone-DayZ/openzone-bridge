@@ -312,4 +312,139 @@ export class StorageStore {
   find(type) {
     return this.q.itemsByType.all(type);
   }
+
+  // ---- parking (design sections 3.2, 3.3) ----
+
+  parked(boxId = '') {
+    const rows = this.q.parkOpen.all();
+    return boxId ? rows.filter((r) => r.box_id === boxId) : rows;
+  }
+
+  park({ boxId, rootIdx, reason, at = stampNow(), note = '' }) {
+    const cur = this.currentChunks(boxId);
+    if (!cur || rootIdx < 0 || rootIdx >= cur.chunks.length) return null;
+    return this.#tx(() => {
+      const chunk = cur.chunks[rootIdx];
+      const nodes = parseChunk(chunk).nodes;
+      const keep = cur.chunks.filter((_, i) => i !== rootIdx);
+      const { version } = this.#newVersion(boxId, keep, { at, source: 'park', saveVer: cur.saveVer, note });
+      const parked = Number(this.q.parkIns.run(boxId, at, reason, nodes[0].type, JSON.stringify(typesOf(nodes)), hashOf(chunk), cur.version).lastInsertRowid);
+      return { version, parked, type: nodes[0].type };
+    });
+  }
+
+  parkMissing(missing, at = stampNow()) {
+    const gone = new Set(missing);
+    const boxes = [];
+    let parked = 0;
+    if (!gone.size) return { parked, boxes };
+    for (const b of this.q.boxesLive.all()) {
+      const cur = this.currentChunks(b.box_id);
+      if (!cur) continue;
+      const keep = [];
+      const out = [];
+      for (const c of cur.chunks) {
+        const nodes = parseChunk(c).nodes;
+        const types = typesOf(nodes);
+        (types.some((t) => gone.has(t)) ? out : keep).push({ c, nodes, types });
+      }
+      if (!out.length) continue;
+      this.#tx(() => {
+        this.#newVersion(b.box_id, keep.map((k) => k.c), { at, source: 'park', saveVer: cur.saveVer, note: 'missing class' });
+        for (const o of out) {
+          this.q.parkIns.run(b.box_id, at, 'missing_class', o.nodes[0].type, JSON.stringify(o.types), hashOf(o.c), cur.version);
+        }
+      });
+      parked += out.length;
+      boxes.push(b.box_id);
+    }
+    return { parked, boxes };
+  }
+
+  unparkPresent(present, at = stampNow()) {
+    const have = new Set(present);
+    const boxes = new Set();
+    let unparked = 0;
+    for (const p of this.q.parkOpen.all()) {
+      let types = [];
+      try { types = JSON.parse(p.types); } catch { types = [p.type]; }
+      if (!types.every((t) => have.has(t))) continue;
+      const box = this.boxOf(p.box_id);
+      if (!box || box.status !== 'closed') continue;
+      const blob = this.q.blobGet.get(p.hash);
+      if (!blob) continue;
+      const cur = this.currentChunks(p.box_id);
+      const chunks = cur ? cur.chunks : [];
+      this.#tx(() => {
+        this.#newVersion(p.box_id, [...chunks, unplace(asBuffer(blob.bytes))], {
+          at, source: 'unpark', saveVer: cur ? cur.saveVer : 0, note: `parked ${p.id} (${p.type})`,
+        });
+        this.q.parkDone.run(at, p.id);
+      });
+      unparked++;
+      boxes.add(p.box_id);
+    }
+    return { unparked, boxes: [...boxes] };
+  }
+
+  // ---- rollback (design section 4.4) ----
+
+  rollback(boxId, versionId, { at = stampNow(), admin = '' } = {}) {
+    const box = this.boxOf(boxId);
+    if (!box || box.status === 'removed') return { ok: false, why: 'unknown box' };
+    if (box.status === 'open') return { ok: false, why: 'the box is open; close it first' };
+    const v = this.q.verGet.get(versionId);
+    if (!v || v.box_id !== boxId) return { ok: false, why: 'no such version of this box' };
+    const chunks = this.q.rootsOf.all(v.id).map((r) => asBuffer(r.bytes));
+    const { version } = this.#tx(() => this.#newVersion(boxId, chunks, {
+      at, source: 'rollback', saveVer: v.save_version, note: `from ${v.id}${admin ? ` by ${admin}` : ''}`,
+    }));
+    return { ok: true, version };
+  }
+
+  // ---- events (design section 3.4) ----
+
+  events(list, serverId = '') {
+    let stored = 0;
+    this.#tx(() => {
+      for (const e of list) {
+        const kind = String(e?.kind || '').slice(0, 32);
+        if (!kind) continue;
+        const at = String(e.at || stampNow());
+        const box = String(e.box || '');
+        const uid = String(e.uid || '');
+        this.q.evIns.run(at, kind, box, uid, String(e.name || ''), String(e.type || ''), Number(e.qty) || 0,
+          Number.isInteger(e.row) ? e.row : -1, Number.isInteger(e.col) ? e.col : -1, String(e.slot || ''),
+          String(e.note || ''), String(serverId || ''), String(e.admin || ''));
+        stored++;
+        if (kind === 'placed' && box) this.seen(box, { class: String(e.type || ''), pos: String(e.note || ''), at, by: uid });
+        if (kind === 'removed' && box) this.removed(box, at);
+      }
+    });
+    return stored;
+  }
+
+  eventsOf(boxId, limit = 100) {
+    return this.q.evOfBox.all(boxId, limit);
+  }
+
+  eventsBy(uid, limit = 100) {
+    return this.q.evOfUid.all(uid, limit);
+  }
+
+  // ---- retention (design section 4.3) ----
+
+  keep({ versionsDays, eventsDays, now = new Date() }) {
+    const cutoff = (days) => stampNow(new Date(now.getTime() - days * 86400 * 1000));
+    return this.#tx(() => {
+      const old = this.q.verOld.all(cutoff(versionsDays));
+      for (const v of old) {
+        this.q.rootsDel.run(v.id);
+        this.q.verDel.run(v.id);
+      }
+      const blobs = this.q.blobGc.run().changes;
+      const events = this.q.evOld.run(cutoff(eventsDays)).changes;
+      return { versions: old.length, blobs: Number(blobs), events: Number(events) };
+    });
+  }
 }
