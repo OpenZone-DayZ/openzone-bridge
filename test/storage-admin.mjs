@@ -146,6 +146,12 @@ s.markClosed(BOX2);
 ok('a move into an unknown box is refused', s.moveRoot(BOX, 0, '9-9-9-9'), { ok: false, why: 'unknown target box' });
 ok('a move out of an unknown box is refused', s.moveRoot('9-9-9-9', 0, BOX), { ok: false, why: 'unknown box' });
 
+const BOX3 = '5-6-7-8';
+s.seen(BOX3, { class: 'OZ_StorageBox_Small', at: '2026-09-19 08:01:30' });
+ok('a move into a box that never had a version keeps the source\'s save version', [s.moveRoot(BOX2, 1, BOX3, { at: '2026-09-19 08:01:31' }).ok, s.versionsOf(BOX3)[0].save_version], [true, 142]);
+s.empty(BOX3, { at: '2026-09-19 08:01:32' });
+ok('a move into an emptied box does not inherit its zero save version', [s.moveRoot(BOX2, 0, BOX3, { at: '2026-09-19 08:01:33' }).ok, s.versionsOf(BOX3)[0].save_version], [true, 142]);
+
 ok('a node with a body is not edited in place', s.editNode(BOX, 0, 0, { quantity: 2 }), { ok: false, why: 'the item carries mod state; reset it to edit' });
 const ed = s.editNode(BOX, 0, 0, { quantity: 2, health: 50, reset: true }, { at: '2026-09-19 08:02:00', admin: 'owner' });
 ok('with reset the edit is taken', [ed.ok, ed.reset, ed.type], [true, true, 'Paper']);
@@ -172,6 +178,11 @@ const preview = s.keepPreview({ versionsDays: 0, eventsDays: 0, now: new Date('2
 ok('keepPreview counts what keep would delete', [preview.versions > 0, preview.events > 0], [true, true]);
 ok('and deletes nothing', s.versionsOf(BOX).length > 1, true);
 ok('a far cut-off counts nothing', s.keepPreview({ versionsDays: 36500, eventsDays: 36500 }), { versions: 0, events: 0 });
+
+s.ingestClose({ boxId: BOX, header: header('2026-09-19 08:04:00'), chunks: [c0, c1], at: '2026-09-19 08:04:01' });
+const parked3 = s.park({ boxId: BOX, rootIdx: 1, reason: 'admin', at: '2026-09-19 08:04:02' });
+s.empty(BOX, { at: '2026-09-19 08:04:03' });
+ok('a parked root returned into an emptied box brings back the save version it was parked under', [s.unparkOne(parked3.parked, '2026-09-19 08:04:04').ok, s.versionsOf(BOX)[0].save_version], [true, 142]);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();

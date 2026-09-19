@@ -475,9 +475,11 @@ export class StorageStore {
     if (!blob) return { ok: false, why: 'the bytes of the root are gone' };
     const cur = this.currentChunks(p.box_id);
     const chunks = cur ? cur.chunks : [];
+    const origin = this.q.verGet.get(p.from_version);
+    const saveVer = cur && cur.saveVer ? cur.saveVer : (origin ? origin.save_version : 0);
     const { version } = this.#tx(() => {
       const v = this.#newVersion(p.box_id, [...chunks, unplace(asBuffer(blob.bytes))], {
-        at, source: 'unpark', saveVer: cur ? cur.saveVer : 0, note: note || `parked ${p.id} (${p.type})`,
+        at, source: 'unpark', saveVer, note: note || `parked ${p.id} (${p.type})`,
       });
       this.q.parkDone.run(at, p.id);
       return v;
@@ -567,7 +569,7 @@ export class StorageStore {
         at, source: 'admin', saveVer: cur.saveVer, note: `move ${type} to ${toId}${who}`,
       });
       const b = this.#newVersion(toId, [...targetChunks, unplace(chunk)], {
-        at, source: 'admin', saveVer: target ? target.saveVer : cur.saveVer, note: `move ${type} from ${fromId}${who}`,
+        at, source: 'admin', saveVer: target && target.saveVer ? target.saveVer : cur.saveVer, note: `move ${type} from ${fromId}${who}`,
       });
       return { ok: true, fromVersion: a.version, toVersion: b.version, type };
     });
