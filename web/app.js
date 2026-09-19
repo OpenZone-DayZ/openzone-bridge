@@ -60,7 +60,7 @@
     if (!rows.length) return h('p', { class: 'dim' }, s('nothing'));
     return h('table', null,
       h('thead', null, h('tr', null, cols.map((c) => h('th', null, s(c))))),
-      h('tbody', null, rows.map((r) => h('tr', null, cols.map((c) => h('td', { class: MONO.has(c) ? 'mono' : '' }, cell(r, c)))))));
+      h('tbody', null, rows.map((r) => { const cells = cell(r); return h('tr', null, cols.map((c) => h('td', { class: MONO.has(c) ? 'mono' : '' }, cells[c]))); })));
   };
   const num = (v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v);
   const status = (st) => s(`st_${st}`);
@@ -118,8 +118,7 @@
     if (me.auth && me.name) {
       who.replaceChildren(h('span', null, `${s('signed_in_as')} ${me.name}`),
         h('button', { type: 'button', onclick: async () => {
-          await fetch('auth/logout', { method: 'POST', headers: { 'x-oz-admin': '1' } });
-          location.reload();
+          try { await fetch('auth/logout', { method: 'POST', headers: { 'x-oz-admin': '1' } }); } finally { location.reload(); }
         } }, s('sign_out')));
     } else if (me.auth) {
       who.replaceChildren(h('a', { href: 'auth/login' }, s('sign_in')));
@@ -146,10 +145,10 @@
     const r = await api('boxes');
     if (!r.ok) return show(h('h2', null, s('nav_boxes')), msg(r.why, true));
     show(h('h2', null, s('nav_boxes')),
-      table(['id', 'cls', 'status', 'items', 'roots', 'pos', 'placed_by', 'last_seen'], r.boxes.filter((b) => b.status !== 'removed'), (b, c) => ({
+      table(['id', 'cls', 'status', 'items', 'roots', 'pos', 'placed_by', 'last_seen'], r.boxes.filter((b) => b.status !== 'removed'), (b) => ({
         id: boxLink(b.box_id), cls: sizeOf(b.class), status: status(b.status), items: b.entities, roots: b.roots,
         pos: b.pos, placed_by: b.placed_by, last_seen: b.last_seen_at,
-      })[c]));
+      })));
   }
 
   async function boxView(id) {
@@ -168,7 +167,7 @@
     }
     const hit = (it) => filter !== '' && it.type.toLowerCase().includes(filter);
     const rootHit = (nodes) => nodes.some(hit);
-    const rowsOf = () => (SIZES[box.class] ? SIZES[box.class][0] : Math.max(5, ...items.map((i) => i.row + 1)));
+    const rowsOf = () => { if (SIZES[box.class]) return SIZES[box.class][0]; let rows = 5; for (const i of items) if (i.row + 1 > rows) rows = i.row + 1; return Math.min(rows, 30); };
     const short = (type) => type.replace(/^OZ_/, '').replace(/[^A-Za-z0-9]/g, '').slice(0, 6);
 
     const grid = h('div', { class: 'grid' });
@@ -371,16 +370,16 @@
     }
     show(title,
       h('h3', null, s('versions')),
-      table(['version', 'stamp', 'source', 'roots', 'items', 'note', 'actions'], r.versions, (v, c) => ({
+      table(['version', 'stamp', 'source', 'roots', 'items', 'note', 'actions'], r.versions, (v) => ({
         version: v.id === current ? h('b', null, `${v.id} (${s('current')})`) : String(v.id),
         stamp: v.stamp, source: v.source, roots: v.roots, items: v.entities, note: v.note,
         actions: h('button', { type: 'button', class: 'small', onclick: () => compare(v) }, s('compare')),
-      })[c]),
+      })),
       diffPanel,
       h('h3', null, s('events')),
-      table(['when', 'kind', 'who', 'cls', 'qty', 'cell', 'note', 'admin'], r.events, (e, c) => ({
+      table(['when', 'kind', 'who', 'cls', 'qty', 'cell', 'note', 'admin'], r.events, (e) => ({
         when: e.at, kind: e.kind, who: e.name || e.uid, cls: e.type, qty: e.qty || '', cell: eventCell(e), note: e.note, admin: e.admin,
-      })[c]));
+      })));
   }
 
   function searchForm(placeholderKey, value, page) {
@@ -398,9 +397,9 @@
     if (!uid) return;
     const r = await api('player', { uid, limit: 500 });
     if (!r.ok) return show(title, form, msg(r.why, true));
-    show(title, form, table(['when', 'kind', 'box', 'cls', 'qty', 'cell', 'note'], r.events, (e, c) => ({
+    show(title, form, table(['when', 'kind', 'box', 'cls', 'qty', 'cell', 'note'], r.events, (e) => ({
       when: e.at, kind: e.kind, box: boxLink(e.box_id), cls: e.type, qty: e.qty || '', cell: eventCell(e), note: e.note,
-    })[c]));
+    })));
   }
 
   async function findView(type) {
@@ -413,9 +412,9 @@
     const last = r.last
       ? h('p', null, `${s('last_taken')}: ${r.last.name || r.last.uid} · ${r.last.at} · `, boxLink(r.last.box_id))
       : h('p', { class: 'dim' }, s('nobody_took'));
-    show(title, form, last, table(['box', 'status', 'cls', 'pos', 'cell', 'qty', 'health'], r.items, (i, c) => ({
+    show(title, form, last, table(['box', 'status', 'cls', 'pos', 'cell', 'qty', 'health'], r.items, (i) => ({
       box: boxLink(i.box_id), status: status(i.status), cls: sizeOf(i.box_class), pos: i.pos, cell: cellOf(i), qty: num(i.quantity), health: num(i.health),
-    })[c]));
+    })));
   }
 
   async function shelfView() {
@@ -426,7 +425,7 @@
     const classes = (p) => {
       try { return JSON.parse(p.types).join(', '); } catch (e) { return p.types; }
     };
-    show(title, table(['id', 'box', 'parked_at', 'reason', 'cls', 'classes', 'from_version', 'actions'], r.parked, (p, c) => ({
+    show(title, table(['id', 'box', 'parked_at', 'reason', 'cls', 'classes', 'from_version', 'actions'], r.parked, (p) => ({
       id: String(p.id), box: boxLink(p.box_id), parked_at: p.parked_at, reason: p.reason, cls: p.type, classes: classes(p), from_version: String(p.from_version),
       actions: h('span', { class: 'row' },
         h('button', { type: 'button', class: 'small', onclick: async () => {
@@ -444,7 +443,7 @@
             notice(s('done'));
           }
         } }, s('shelf_discard'))),
-    })[c]));
+    })));
   }
 
   async function healthView() {
@@ -464,7 +463,7 @@
         ? h('ul', null, r.servers.map((x) => h('li', { class: 'mono' }, `${x.id}: ${s('last_poll')} ${x.at}`)))
         : h('p', { class: 'dim' }, s('no_servers')),
       h('h3', null, s('open_boxes')),
-      table(['id', 'cls', 'last_seen'], r.open || [], (b, c) => ({ id: boxLink(b.box_id), cls: sizeOf(b.class), last_seen: b.last_seen_at })[c]));
+      table(['id', 'cls', 'last_seen'], r.open || [], (b) => ({ id: boxLink(b.box_id), cls: sizeOf(b.class), last_seen: b.last_seen_at })));
   }
 
   // ---- router ----

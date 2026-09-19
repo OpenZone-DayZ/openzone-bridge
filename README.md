@@ -143,8 +143,10 @@ sends admins to Discord and admits holders of one of the roles in
 `DISCORD_CLIENT_SECRET`, `DISCORD_CLIENT_ID` and `DISCORD_GUILD_ID` are required,
 and the Developer Portal must list `<ADMIN_URL>/auth/callback` under OAuth2 ->
 Redirects. Sessions last twelve hours and live in memory: a restart signs
-everyone out. A reverse proxy in front of the page must pass the path without a
-prefix, e.g. `location /storage/ { proxy_pass http://127.0.0.1:8788/; }`.
+everyone out. A reverse proxy belongs in front of the page only with
+`ADMIN_URL` and its sign-in; the bridge refuses forwarded requests otherwise.
+The proxy must pass the path without a prefix, e.g.
+`location /storage/ { proxy_pass http://127.0.0.1:8788/; }`.
 
 | `.env` key | Default | Meaning |
 |---|---|---|
@@ -191,10 +193,11 @@ interface offered every player's private conversation to whoever guessed one str
 Set `BRIDGE_HOST=0.0.0.0` only behind a TLS terminator.
 
 The storage admin page listens on 127.0.0.1 only. It checks the `Host` header, wants
-a custom header and a JSON body on its api and refuses cross-site fetches, so a
-browser on the same machine cannot be turned against it by a page it visits; without
-`ADMIN_URL` and its Discord sign-in that is all there is, which is why that mode
-must never be exposed.
+a custom header and a JSON body on its api and refuses cross-site fetches, cannot be
+framed (`X-Frame-Options`, a `frame-ancestors 'none'` policy), and refuses forwarded
+requests while sign-in is off, so a browser on the same machine cannot be turned
+against it by a page it visits; without `ADMIN_URL` and its Discord sign-in that is
+all there is, which is why that mode must never be exposed.
 
 ## Status
 
