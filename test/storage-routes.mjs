@@ -110,7 +110,7 @@ async function call(path, json) {
 try {
   await ready();
 
-  ok('boot of an unknown box answers none', await call('/v1/storage/boot', { boxes: [{ id: BOX, class: 'OZ_StorageBox_Large', state: 'CLOSED', entities: 0, pos: '4650 339 10400' }] }),
+  ok('boot of an unknown box answers none', await call('/v1/storage/boot', { boxes: [{ id: BOX, cls: 'OZ_StorageBox_Large', state: 'CLOSED', entities: 0, pos: '4650 339 10400' }] }),
     { ok: true, boxes: [{ id: BOX, status: 'none', version: 0, roots: 0 }], classes: [] });
 
   // A close: the game writes the file, then tells the bridge.

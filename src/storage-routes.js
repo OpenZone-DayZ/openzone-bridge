@@ -17,7 +17,8 @@ export function storageRoutes({ store, xchg }) {
     '/v1/storage/boot': async ({ Json }) => {
       if (!xchg) return off;
       const boxes = (Array.isArray(Json?.boxes) ? Json.boxes : [])
-        .map((b) => ({ id: String(b?.id || ''), class: String(b?.class || ''), state: String(b?.state || ''), entities: Number(b?.entities) || 0, pos: String(b?.pos || '') }))
+        // `cls` is the game's spelling: `class` is a keyword in Enforce Script.
+        .map((b) => ({ id: String(b?.id || ''), class: String(b?.class || b?.cls || ''), state: String(b?.state || ''), entities: Number(b?.entities) || 0, pos: String(b?.pos || '') }))
         .filter((b) => Xchg.isBoxId(b.id));
       const answer = store.boot(boxes);
       try {
