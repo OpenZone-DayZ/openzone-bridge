@@ -34,7 +34,6 @@ const pouch = [
   { parent: 0, type: 'SmallProtectorCase', locType: 3, slot: -1, row: 0, col: 0, flip: 0, health: 100, quantity: 0, liquid: 0, ammo: 0, hasBlob: 1 },
 ];
 const header = (stamp) => ({ stamp, boxClass: 'OZ_StorageBox_Large', saveVer: 142 });
-const hex = (b) => Buffer.from(b).toString('hex');
 
 const base = new Store(path);
 const s = new StorageStore(base);
@@ -63,7 +62,7 @@ ok('throwing away twice is refused', s.discardParked(parked2.parked), { ok: fals
 const given = s.give(BOX, 'Rag', 3, { at: '2026-09-19 07:04:00', admin: 'owner' });
 ok('give makes a new version with one more root', [given.ok, given.version, s.currentChunks(BOX).roots], [true, 5, 2]);
 const gift = parseChunk(s.currentChunks(BOX).chunks[1]).nodes[0];
-ok('the gift has no body, no cell, the quantity and a default health', [gift.type, gift.hasBlob, gift.row, gift.col, gift.quantity, gift.health], ['Rag', 0, -1, -1, 3, 0]);
+ok('the gift has no body, no cell, the quantity and a default health of -1', [gift.type, gift.hasBlob, gift.row, gift.col, gift.quantity, gift.health], ['Rag', 0, -1, -1, 3, -1]);
 ok('the gift is indexed', s.find('Rag').length, 1);
 ok('a bad class name is refused', s.give(BOX, 'Rag; DROP', 1), { ok: false, why: 'bad class name' });
 ok('an unknown box is refused', s.give('1-2-3-4', 'Rag', 1), { ok: false, why: 'unknown box' });
@@ -75,8 +74,8 @@ s.markOpen(BOX);
 ok('an open box cannot be emptied through SQL', s.empty(BOX), { ok: false, why: 'the box is open; close it first' });
 s.markClosed(BOX);
 
-s.events([{ at: '2026-09-19 07:06:00', kind: 'admin_result', box: BOX, name: 'owner', note: 'abc123: ok CLOSED entities=0' }], 'stand');
-ok('resultOf finds the answer by its ref', s.resultOf('abc123').note, 'abc123: ok CLOSED entities=0');
+s.events([{ at: '2026-09-19 07:06:00', kind: 'admin_result', box: BOX, name: 'owner', note: 'abc123abc123: ok CLOSED entities=0' }], 'stand');
+ok('resultOf finds the answer by its ref', s.resultOf('abc123abc123').note, 'abc123abc123: ok CLOSED entities=0');
 ok('resultOf of an unknown ref is null', s.resultOf('nope'), null);
 
 console.log('admin ops');
@@ -92,13 +91,17 @@ ok('box', Object.keys(admin.box({ id: BOX })).sort(), ['box', 'items', 'ok', 've
 ok('box of an unknown id', admin.box({ id: '9-9-9-9' }), { ok: false, why: 'unknown box' });
 ok('find', admin.find({ type: 'Paper' }).items.length, 1);
 ok('parked', admin.parked().parked.length, 0);
+ok('history answers events and versions', Object.keys(admin.history({ id: BOX })).sort(), ['events', 'ok', 'versions']);
+ok('history of an unknown box is refused', admin.history({ id: '9-9-9-9' }), { ok: false, why: 'unknown box' });
+ok('player answers events', admin.player({ uid: 'nobody' }), { ok: true, events: [] });
+ok('a fractional limit is coerced, not thrown', admin.history({ id: BOX, limit: 1.5 }).ok, true);
 
 const target = s.versionsOf(BOX).find((v) => v.roots === 0).id;
 const rb = admin.rollback({ id: BOX, version: target, admin: 'owner' });
 ok('rollback answers the new version', [rb.ok, rb.version > target], [true, true]);
 ok('rollback drops the cache', existsSync(x.cachePath(BOX)), false);
 ok('rollback is an event with the admin', s.eventsOf(BOX)[0].kind + ' ' + s.eventsOf(BOX)[0].admin, 'admin_rollback owner');
-ok('rollback of a wrong version is refused in words', admin.rollback({ id: BOX, version: 1, admin: 'owner' }).ok, true);
+ok('rollback to another own version succeeds', admin.rollback({ id: BOX, version: 1, admin: 'owner' }).ok, true);
 
 const g = admin.give({ id: BOX, type: 'Rag', qty: 2, admin: 'owner' });
 ok('give', [g.ok, s.currentChunks(BOX).roots], [true, 3]);

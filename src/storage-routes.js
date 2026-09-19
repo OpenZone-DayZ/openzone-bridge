@@ -97,11 +97,15 @@ export function storageRoutes({ store, xchg, admin }) {
         // A box the engine has and SQL does not: new, and empty (design
         // section 3.3, status none). Its first close makes its first version.
         store.seen(id, { by: String(Json.by || '') });
+        store.markOpen(id);
         return { ok: true, empty: true };
       }
       if (box.status === 'open') console.warn(`[storage] open of ${id}, which SQL believed open already; the engine knows better`);
       const cur = store.currentChunks(id);
-      if (!cur || cur.chunks.length === 0) return { ok: true, empty: true };
+      if (!cur || cur.chunks.length === 0) {
+        store.markOpen(id);
+        return { ok: true, empty: true };
+      }
       const info = xchg.cacheInfo(id);
       const valid = info && box.cache_size > 0 && info.size === box.cache_size && info.stamp === cur.stamp;
       if (!valid) {
@@ -122,6 +126,7 @@ export function storageRoutes({ store, xchg, admin }) {
       } catch (e) {
         return bad(`a stored root cannot be parsed: ${e.message}`);
       }
+      store.markOpen(id);
       return { ok: true, file: xchg.cacheName(id), stamp: cur.stamp, roots: cur.chunks.length, entities };
     },
 

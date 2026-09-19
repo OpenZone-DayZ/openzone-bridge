@@ -10,6 +10,7 @@ import { stampNow } from './storage-wire.js';
 
 export function storageAdmin({ store, xchg, push }) {
   const bad = (why) => ({ ok: false, why });
+  const limitOf = (v) => Math.min(1000, Math.max(1, Math.trunc(Number(v)) || 100));
   const dropCache = (id) => {
     if (xchg) xchg.dropCache(id);
   };
@@ -43,11 +44,11 @@ export function storageAdmin({ store, xchg, push }) {
     history: ({ id, limit }) => {
       const box = known(id);
       if (!box) return bad('unknown box');
-      const n = Number(limit) || 100;
+      const n = limitOf(limit);
       return { ok: true, events: store.eventsOf(box.box_id, n), versions: store.versionsOf(box.box_id, n) };
     },
 
-    player: ({ uid, limit }) => ({ ok: true, events: store.eventsBy(String(uid || ''), Number(limit) || 100) }),
+    player: ({ uid, limit }) => ({ ok: true, events: store.eventsBy(String(uid || ''), limitOf(limit)) }),
 
     find: ({ type }) => ({ ok: true, items: store.find(String(type || '')) }),
 

@@ -489,15 +489,15 @@ export class StorageStore {
   }
 
   // A new root without a body: the engine creates it in a free cell with the
-  // descriptor's state (health 0 = the class default). Closed boxes only.
+  // descriptor's state (health -1 = the class default). Closed boxes only.
   give(boxId, type, quantity = 0, { at = stampNow(), admin = '' } = {}) {
     const box = this.boxOf(boxId);
     if (!box || box.status === 'removed') return { ok: false, why: 'unknown box' };
     if (box.status !== 'closed') return { ok: false, why: 'the box is open; close it first' };
-    if (!/^[A-Za-z0-9_]{1,64}$/.test(String(type))) return { ok: false, why: 'bad class name' };
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(String(type))) return { ok: false, why: 'bad class name' };
     const chunk = buildChunk([{
       parent: -1, type: String(type), locType: 3, slot: -1, row: -1, col: -1, flip: 0,
-      health: 0, quantity: Number(quantity) || 0, liquid: 0, ammo: 0, hasBlob: 0,
+      health: -1, quantity: Number(quantity) || 0, liquid: 0, ammo: 0, hasBlob: 0,
     }]);
     const cur = this.currentChunks(boxId);
     const chunks = cur ? cur.chunks : [];
@@ -520,7 +520,7 @@ export class StorageStore {
 
   // The engine's answer to a live command, by the ref the command carried.
   resultOf(ref) {
-    if (!ref) return null;
+    if (!/^[0-9a-f]{12}$/.test(String(ref || ''))) return null;
     return this.q.evResult.get(`${ref}: %`) || null;
   }
 }

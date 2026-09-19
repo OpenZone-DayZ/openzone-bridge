@@ -169,18 +169,21 @@ try {
   const boxes = await call('/v1/storage/admin', { op: 'boxes' });
   ok('admin boxes', [boxes.ok, boxes.boxes.map((b) => b.box_id).includes(BOX)], [true, true]);
   ok('admin unknown op', await call('/v1/storage/admin', { op: 'nope' }), { ok: false, why: 'unknown op: nope' });
-  ok('an admin op given a bad argument is refused in words rather than throwing', (await call('/v1/storage/admin', { op: 'unpark', parked: 'x' })).ok, false);
+  ok('a fractional limit is coerced, not thrown', (await call('/v1/storage/admin', { op: 'history', id: BOX, limit: 1.5 })).ok, true);
   await call('/v1/storage/open', { id: BOX, by: '' });
   ok('the cache exists before the rollback', existsSync(join(xdir, `${BOX}.bin`)), true);
+  await call('/v1/storage/closed', { id: BOX, version: 0 });
   const rb = await call('/v1/storage/admin', { op: 'rollback', id: BOX, version: 1, admin: 'owner' });
   ok('admin rollback', rb.ok, true);
   ok('and the cache is gone', existsSync(join(xdir, `${BOX}.bin`)), false);
   const back = await call('/v1/storage/open', { id: BOX, by: '' });
   ok('the next open rebuilds it with the rolled-back roots', [back.ok, back.roots], [true, 3]);
+  await call('/v1/storage/closed', { id: BOX, version: 0 });
   const gift = await call('/v1/storage/admin', { op: 'give', id: BOX, type: 'Rag', qty: 2, admin: 'owner' });
   ok('admin give', gift.ok, true);
   const withGift = await call('/v1/storage/open', { id: BOX, by: '' });
   ok('the next open has the gift', [withGift.ok, withGift.roots], [true, 4]);
+  ok('an open marks the box open in SQL', (await call('/v1/storage/admin', { op: 'give', id: BOX, type: 'Rag', qty: 1, admin: 'owner' })), { ok: false, why: 'the box is open; close it first' });
   // A server's first poll starts at the current push cursor, so the game
   // must have polled once before a command is queued for it.
   const pollOnce = (fresh) => fetch(`${BASE}/v1/poll`, {
