@@ -130,6 +130,7 @@ export class StorageStore {
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
       verGet: q('SELECT * FROM storage_versions WHERE id = ?'),
       verOf: q('SELECT * FROM storage_versions WHERE box_id = ? ORDER BY id DESC LIMIT ?'),
+      verNewestSave: q('SELECT save_version FROM storage_versions WHERE box_id = ? AND save_version > 0 ORDER BY id DESC LIMIT 1'),
       verOld: q(`SELECT v.id FROM storage_versions v JOIN storage_boxes b ON b.box_id = v.box_id
                  WHERE v.created_at < ? AND v.id != b.current_version`),
       verOldCount: q(`SELECT COUNT(*) AS n FROM storage_versions v JOIN storage_boxes b ON b.box_id = v.box_id
@@ -213,6 +214,17 @@ export class StorageStore {
     this.#reindex(boxId, parsed);
     this.q.boxCurrent.run(version, boxId);
     return { version, roots: chunks.length, entities };
+  }
+
+  // The save version a version with bodies must carry: the engine hands
+  // it to every OnStoreLoad, and a bodied chunk under 0 misparses. The
+  // first non-zero candidate wins, then the box's newest non-zero one
+  // (a version keep() has not purged), then 0 -- only ever for a
+  // version without bodies.
+  #saveVerFor(boxId, ...candidates) {
+    for (const c of candidates) if (c) return c;
+    const row = this.q.verNewestSave.get(boxId);
+    return row ? row.save_version : 0;
   }
 
   // ---- boxes ----
@@ -386,7 +398,7 @@ export class StorageStore {
       const chunks = cur ? cur.chunks : [];
       this.#tx(() => {
         this.#newVersion(p.box_id, [...chunks, unplace(asBuffer(blob.bytes))], {
-          at, source: 'unpark', saveVer: cur ? cur.saveVer : 0, note: `parked ${p.id} (${p.type})`,
+          at, source: 'unpark', saveVer: this.#saveVerFor(p.box_id, cur ? cur.saveVer : 0), note: `parked ${p.id} (${p.type})`,
         });
         this.q.parkDone.run(at, p.id);
       });
@@ -476,7 +488,7 @@ export class StorageStore {
     const cur = this.currentChunks(p.box_id);
     const chunks = cur ? cur.chunks : [];
     const origin = this.q.verGet.get(p.from_version);
-    const saveVer = cur && cur.saveVer ? cur.saveVer : (origin ? origin.save_version : 0);
+    const saveVer = this.#saveVerFor(p.box_id, cur ? cur.saveVer : 0, origin ? origin.save_version : 0);
     const { version } = this.#tx(() => {
       const v = this.#newVersion(p.box_id, [...chunks, unplace(asBuffer(blob.bytes))], {
         at, source: 'unpark', saveVer, note: note || `parked ${p.id} (${p.type})`,
@@ -569,7 +581,7 @@ export class StorageStore {
         at, source: 'admin', saveVer: cur.saveVer, note: `move ${type} to ${toId}${who}`,
       });
       const b = this.#newVersion(toId, [...targetChunks, unplace(chunk)], {
-        at, source: 'admin', saveVer: target && target.saveVer ? target.saveVer : cur.saveVer, note: `move ${type} from ${fromId}${who}`,
+        at, source: 'admin', saveVer: this.#saveVerFor(toId, target ? target.saveVer : 0, cur.saveVer), note: `move ${type} from ${fromId}${who}`,
       });
       return { ok: true, fromVersion: a.version, toVersion: b.version, type };
     });

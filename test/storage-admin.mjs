@@ -236,6 +236,36 @@ ok('an open box shows in health', admin2.health().open.map((b) => b.box_id), [BO
 s.markClosed(BOX);
 ok('health without a health function still answers', admin.health().ok, true);
 
+console.log('store: the save version of a version with bodies');
+
+// (a) unparkPresent into an emptied box: a root parked as missing_class
+// (by parkMissing) comes back once its classes are all present again, and
+// the box it returns into has since been emptied (save_version 0) -- the
+// box's own last known save version (142, from the original ingestClose)
+// must survive the round trip.
+s.ingestClose({ boxId: BOX, header: header('2026-09-19 10:00:00'), chunks: [c0, c1], at: '2026-09-19 10:00:01' });
+s.parkMissing(['PlateCarrierPouches']);
+s.empty(BOX, { at: '2026-09-19 10:00:02' });
+const backA = s.unparkPresent(['PlateCarrierPouches', 'SmallProtectorCase'], '2026-09-19 10:00:03');
+// Two, not one: the shelved root from the "admin ops" section above (never
+// unparked) carries the same classes and is legitimately restored too.
+ok('unparkPresent restores every root parked with these classes', [backA.unparked, backA.boxes], [2, [BOX]]);
+ok('the box\'s new version keeps its last known save version, not the emptied box\'s zero', s.versionsOf(BOX)[0].save_version, 142);
+ok('and the root is back', parseChunk(s.currentChunks(BOX).chunks.at(-1)).nodes[0].type, 'PlateCarrierPouches');
+
+// (b) unparkOne whose origin version was purged (by keep(), simulated here
+// by deleting it directly): the save version is found on an older
+// surviving version of the same box instead.
+s.ingestClose({ boxId: BOX, header: header('2026-09-19 10:01:00'), chunks: [c0, c1], at: '2026-09-19 10:01:01' });
+const fromVersion = s.currentChunks(BOX).version;
+const parkedB = s.park({ boxId: BOX, rootIdx: 1, reason: 'admin', at: '2026-09-19 10:01:02' });
+s.db.prepare('DELETE FROM storage_versions WHERE id = ?').run(fromVersion);
+s.db.prepare('DELETE FROM storage_roots WHERE version_id = ?').run(fromVersion);
+s.empty(BOX, { at: '2026-09-19 10:01:03' });
+const backB = s.unparkOne(parkedB.parked, '2026-09-19 10:01:04');
+ok('unparkOne whose origin version was purged still succeeds', backB.ok, true);
+ok('its save version is found on an older surviving version of the box', s.versionsOf(BOX)[0].save_version, 142);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();
 rmSync(dir, { recursive: true, force: true });
