@@ -100,7 +100,7 @@ const cfg = {
   // alongside the Administrator permission (personas, /openzone) and, with
   // sign-in on, as admins of the storage web. One or more ids, separated by
   // commas or spaces.
-  adminRoleIds: String(process.env.DISCORD_ADMIN_ROLE_ID || '').split(/[\s,;]+/).filter(Boolean),
+  adminRoleIds: String(process.env.DISCORD_ADMIN_ROLE_ID || '').split(/[\s,]+/).filter(Boolean),
   // Storage boxes (design 2026-09-19). The exchange directory is the game
   // server's $profile:OpenZone/Storage/xchg; unset, the storage routes
   // refuse and boxes stay unavailable in the game.
@@ -1725,6 +1725,9 @@ http = new HttpSide(cfg, { routes, drain, discordOn: () => discord.configured })
 // sign-in must be there too, or the web stays down and says which key --
 // the bridge itself goes on, as it does over a bad exchange directory.
 let web = null;
+if (process.env.ADMIN_PORT !== undefined && process.env.ADMIN_PORT !== '' && !Number.isFinite(Number(process.env.ADMIN_PORT))) {
+  console.error('[admin] ADMIN_PORT is not a number: the admin web is off');
+}
 if (cfg.adminPort > 0) {
   let auth = null;
   let webUp = true;
@@ -1752,13 +1755,18 @@ if (cfg.adminPort > 0) {
     }
   }
   if (webUp) {
-    web = storageWeb({
-      ops: storageAdminOps,
-      dir: join(dirname(fileURLToPath(import.meta.url)), '..', 'web'),
-      allowedHosts: hostOfUrl ? [hostOfUrl] : [],
-      auth,
-    });
-    await web.listen(cfg.adminPort);
+    try {
+      web = storageWeb({
+        ops: storageAdminOps,
+        dir: join(dirname(fileURLToPath(import.meta.url)), '..', 'web'),
+        allowedHosts: hostOfUrl ? [hostOfUrl] : [],
+        auth,
+      });
+      await web.listen(cfg.adminPort);
+    } catch (e) {
+      web = null;
+      console.error(`[admin] the admin web could not listen on 127.0.0.1:${cfg.adminPort} (${e.code || e.message}): it stays down, the bridge goes on`);
+    }
   }
 }
 

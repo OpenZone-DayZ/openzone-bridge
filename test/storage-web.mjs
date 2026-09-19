@@ -130,6 +130,21 @@ ok('logout from elsewhere is refused', (await raw(port2, 'POST', '/auth/logout',
 ok('an unknown sign-in page is a 404', (await raw(port2, 'GET', '/auth/nope')).status, 404);
 await web2.close();
 
+console.log('web: a taken port');
+{
+  const first = storageWeb({ ops, dir, allowedHosts: [] });
+  const taken = await first.listen(0);
+  const second = storageWeb({ ops, dir, allowedHosts: [] });
+  let code = '';
+  try {
+    await second.listen(taken);
+  } catch (e) {
+    code = e.code;
+  }
+  ok('listen on a taken port rejects with the socket error, so the bridge can catch it', code, 'EADDRINUSE');
+  await first.close();
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 rmSync(dir, { recursive: true, force: true });
 process.exit(fail ? 1 : 0);
