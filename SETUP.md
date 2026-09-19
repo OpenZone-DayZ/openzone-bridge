@@ -3,6 +3,9 @@
 Five minutes of clicking, once. Do this before the bridge is written and it will
 be waiting when the bridge arrives.
 
+Without Node: take the release zip instead (README, "Running from the release") -- the
+same `.env` next to the exe.
+
 **Nothing secret leaves your machine.** The bot token and the client secret go
 into `.env` and are read only by the bridge process. They are never logged,
 never sent to a game client, and never committed — `.env` is gitignored.

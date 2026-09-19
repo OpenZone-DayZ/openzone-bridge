@@ -1,0 +1,33 @@
+# A tag v* becomes a GitHub release with the Windows single executable.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:sea
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $zip = (Get-ChildItem dist -Filter 'openzone-bridge-*-win32-x64.zip' | Select-Object -First 1).FullName
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "openzone-bridge $tag" --notes "Windows x64 single executable: unzip, copy .env.example to .env and fill it in, run openzone-bridge.exe. README.md and SETUP.md are inside."
+          }
+          gh release upload $tag $zip --clobber

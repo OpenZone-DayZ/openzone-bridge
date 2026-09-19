@@ -66,6 +66,25 @@ compile on the host) and a filled-in `.env` (see `SETUP.md`). Then:
 Both scripts check the Node version, install the two dependencies on first
 run, refuse to start without `.env`, and then just run `node src/index.js`.
 
+## Running from the release
+
+Every `v*` tag is a GitHub release with `openzone-bridge-<version>-win32-x64.zip`: one
+`openzone-bridge.exe` (Node built in, nothing to install) with `web/`, `.env.example`,
+this README and SETUP.md beside it. Unzip anywhere, copy `.env.example` to `.env` next to
+the exe, fill it in (SETUP.md), run `openzone-bridge.exe`. The exe reads `.env`, keeps its
+database in `state/` and serves `web/` from its own folder, whatever the current directory
+is; update by replacing the exe and `web/`, keep `.env` and `state/`. The console client
+`scripts/storage.mjs` is not in the exe -- the admin page covers it; the script needs Node
+and the repository.
+
+## Building the release
+
+`npm run build:sea` bundles the sources with esbuild, makes a Node single-executable
+blob and injects it into a copy of the running Node (`scripts/build-sea.mjs`); the result is
+`dist/openzone-bridge-<version>-<platform>-<arch>/` and its zip. The workflow
+`.github/workflows/release.yml` does the same on `windows-latest` for every tag and
+publishes the zip.
+
 ## Tests
 
 ```
