@@ -121,7 +121,9 @@ export class StorageStore {
       boxIds: q(`SELECT box_id FROM storage_boxes WHERE status != 'removed' ORDER BY box_id`),
       boxesLive: q(`SELECT box_id, status, current_version FROM storage_boxes
                     WHERE status != 'removed' AND current_version > 0 ORDER BY box_id`),
-      boxesAll: q(`SELECT b.*, COALESCE((SELECT v.roots FROM storage_versions v WHERE v.id = b.current_version), 0) AS roots
+      boxesAll: q(`SELECT b.*,
+                     COALESCE((SELECT v.roots FROM storage_versions v WHERE v.id = b.current_version), 0) AS roots,
+                     COALESCE((SELECT v.entities FROM storage_versions v WHERE v.id = b.current_version), 0) AS entities
                    FROM storage_boxes b ORDER BY b.box_id`),
 
       verIns: q(`INSERT INTO storage_versions(box_id, stamp, created_at, source, save_version, roots, entities, note)
@@ -130,6 +132,8 @@ export class StorageStore {
       verOf: q('SELECT * FROM storage_versions WHERE box_id = ? ORDER BY id DESC LIMIT ?'),
       verOld: q(`SELECT v.id FROM storage_versions v JOIN storage_boxes b ON b.box_id = v.box_id
                  WHERE v.created_at < ? AND v.id != b.current_version`),
+      verOldCount: q(`SELECT COUNT(*) AS n FROM storage_versions v JOIN storage_boxes b ON b.box_id = v.box_id
+                      WHERE v.created_at < ? AND v.id != b.current_version`),
       verDel: q('DELETE FROM storage_versions WHERE id = ?'),
 
       rootIns: q('INSERT INTO storage_roots(version_id, idx, hash) VALUES (?, ?, ?)'),
@@ -164,6 +168,8 @@ export class StorageStore {
       evOfBox: q('SELECT * FROM storage_events WHERE box_id = ? ORDER BY id DESC LIMIT ?'),
       evOfUid: q('SELECT * FROM storage_events WHERE uid = ? ORDER BY id DESC LIMIT ?'),
       evOld: q('DELETE FROM storage_events WHERE at < ?'),
+      evOldCount: q('SELECT COUNT(*) AS n FROM storage_events WHERE at < ?'),
+      evLastTake: q(`SELECT * FROM storage_events WHERE type = ? AND kind = 'take' ORDER BY id DESC LIMIT 1`),
       evResult: q(`SELECT * FROM storage_events WHERE kind = 'admin_result' AND note LIKE ? ORDER BY id DESC LIMIT 1`),
     };
   }
@@ -522,5 +528,87 @@ export class StorageStore {
   resultOf(ref) {
     if (!/^[0-9a-f]{12}$/.test(String(ref || ''))) return null;
     return this.q.evResult.get(`${ref}: %`) || null;
+  }
+
+  // Who took a class last, for the search page: the newest take event of it.
+  lastTake(type) {
+    return this.q.evLastTake.get(String(type)) || null;
+  }
+
+  // What keep() would delete now, without deleting it (the health page).
+  keepPreview({ versionsDays, eventsDays, now = new Date() }) {
+    const cutoff = (days) => stampNow(new Date(now.getTime() - days * 86400 * 1000));
+    return {
+      versions: Number(this.q.verOldCount.get(cutoff(versionsDays)).n),
+      events: Number(this.q.evOldCount.get(cutoff(eventsDays)).n),
+    };
+  }
+
+  // One root out of a closed box into another closed box, unplaced: the
+  // engine finds it a free cell at the target's next open, or parks it as
+  // no_room. Two new versions in one transaction, so neither box is ever
+  // seen with the root both here and there, or nowhere.
+  moveRoot(fromId, rootIdx, toId, { at = stampNow(), admin = '' } = {}) {
+    if (fromId === toId) return { ok: false, why: 'the same box' };
+    const from = this.boxOf(fromId);
+    if (!from || from.status === 'removed') return { ok: false, why: 'unknown box' };
+    const to = this.boxOf(toId);
+    if (!to || to.status === 'removed') return { ok: false, why: 'unknown target box' };
+    if (from.status !== 'closed' || to.status !== 'closed') return { ok: false, why: 'both boxes must be closed' };
+    const cur = this.currentChunks(fromId);
+    if (!cur || !Number.isInteger(rootIdx) || rootIdx < 0 || rootIdx >= cur.chunks.length) return { ok: false, why: 'no such root of this box' };
+    const chunk = cur.chunks[rootIdx];
+    const type = parseChunk(chunk).nodes[0].type;
+    const target = this.currentChunks(toId);
+    const targetChunks = target ? target.chunks : [];
+    const who = admin ? ` by ${admin}` : '';
+    return this.#tx(() => {
+      const a = this.#newVersion(fromId, cur.chunks.filter((_, i) => i !== rootIdx), {
+        at, source: 'admin', saveVer: cur.saveVer, note: `move ${type} to ${toId}${who}`,
+      });
+      const b = this.#newVersion(toId, [...targetChunks, unplace(chunk)], {
+        at, source: 'admin', saveVer: target ? target.saveVer : cur.saveVer, note: `move ${type} from ${fromId}${who}`,
+      });
+      return { ok: true, fromVersion: a.version, toVersion: b.version, type };
+    });
+  }
+
+  // Quantity and health of one node, written into its descriptor. A node
+  // with a body keeps its real state in that body, and the bodies of a root
+  // are one opaque run for all of its nodes -- no single segment can be cut
+  // out -- so such a node is editable only by dropping the whole root's
+  // bodies (reset), after which every node of the root carries only what
+  // its descriptor says.
+  editNode(boxId, rootIdx, nodeIdx, { quantity, health, reset = false } = {}, { at = stampNow(), admin = '' } = {}) {
+    const box = this.boxOf(boxId);
+    if (!box || box.status === 'removed') return { ok: false, why: 'unknown box' };
+    if (box.status !== 'closed') return { ok: false, why: 'the box is open; close it first' };
+    const cur = this.currentChunks(boxId);
+    if (!cur || !Number.isInteger(rootIdx) || rootIdx < 0 || rootIdx >= cur.chunks.length) return { ok: false, why: 'no such root of this box' };
+    const chunk = cur.chunks[rootIdx];
+    const { nodes, bodyOffset } = parseChunk(chunk);
+    if (!Number.isInteger(nodeIdx) || nodeIdx < 0 || nodeIdx >= nodes.length) return { ok: false, why: 'no such node of this root' };
+    const given = (v) => !(v === undefined || v === null || v === '');
+    const q = given(quantity) ? Number(quantity) : null;
+    const h = given(health) ? Number(health) : null;
+    if (q !== null && !(Number.isFinite(q) && q >= 0)) return { ok: false, why: 'bad quantity' };
+    if (h !== null && !(Number.isFinite(h) && h >= -1)) return { ok: false, why: 'bad health' };
+    if (q === null && h === null) return { ok: false, why: 'nothing to change' };
+    if (nodes[nodeIdx].hasBlob && !reset) return { ok: false, why: 'the item carries mod state; reset it to edit' };
+    const edited = nodes.map((n, i) => {
+      const m = reset ? { ...n, hasBlob: 0 } : { ...n };
+      if (i === nodeIdx) {
+        if (q !== null) m.quantity = q;
+        if (h !== null) m.health = h;
+      }
+      return m;
+    });
+    const body = reset ? Buffer.alloc(0) : chunk.subarray(bodyOffset);
+    const chunks = cur.chunks.map((c, i) => (i === rootIdx ? buildChunk(edited, body) : c));
+    const type = nodes[nodeIdx].type;
+    const { version } = this.#tx(() => this.#newVersion(boxId, chunks, {
+      at, source: 'admin', saveVer: cur.saveVer, note: `edit ${type}${reset ? ' (state reset)' : ''}${admin ? ` by ${admin}` : ''}`,
+    }));
+    return { ok: true, version, type, reset: !!reset };
   }
 }

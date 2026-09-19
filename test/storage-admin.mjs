@@ -122,6 +122,57 @@ ok('result of an unanswered ref is null', admin.result({ ref: live.ref }), { ok:
 s.events([{ at: '2026-09-19 07:13:00', kind: 'admin_result', box: BOX, note: `${live.ref}: ok closing` }], 'stand');
 ok('result of an answered ref is the event', admin.result({ ref: live.ref }).result.note, `${live.ref}: ok closing`);
 
+console.log('store: move, edit, last take, keep preview');
+
+const BOX2 = '1-2-3-4';
+s.seen(BOX2, { class: 'OZ_StorageBox_Small', at: '2026-09-19 08:00:00' });
+s.ingestClose({ boxId: BOX, header: header('2026-09-19 08:00:00'), chunks: [c0, c1], at: '2026-09-19 08:00:01' });
+s.ingestClose({ boxId: BOX2, header: header('2026-09-19 08:00:00'), chunks: [c0], at: '2026-09-19 08:00:01' });
+ok('boxes carries the roots and the entities of the current version', s.boxes().map((b) => [b.box_id, b.roots, b.entities]), [[BOX, 2, 3], [BOX2, 1, 1]]);
+
+const mv = s.moveRoot(BOX, 1, BOX2, { at: '2026-09-19 08:01:00', admin: 'owner' });
+ok('move takes a root out of one closed box into another', [mv.ok, mv.type, s.currentChunks(BOX).roots, s.currentChunks(BOX2).roots], [true, 'PlateCarrierPouches', 1, 2]);
+ok('the moved root arrives unplaced, its body and its children intact', (() => {
+  const p = parseChunk(s.currentChunks(BOX2).chunks[1]);
+  return [p.nodes[0].row, p.nodes[0].col, p.nodes.length, p.nodes[0].hasBlob];
+})(), [-1, -1, 2, 1]);
+ok('both new versions say what happened', [s.versionsOf(BOX)[0].note, s.versionsOf(BOX2)[0].note], [`move PlateCarrierPouches to ${BOX2} by owner`, `move PlateCarrierPouches from ${BOX} by owner`]);
+ok('the index of both boxes follows', [s.itemsOf(BOX).length, s.itemsOf(BOX2).length], [1, 3]);
+ok('a move into the same box is refused', s.moveRoot(BOX, 0, BOX), { ok: false, why: 'the same box' });
+ok('a move of a root that is not there is refused', s.moveRoot(BOX, 5, BOX2), { ok: false, why: 'no such root of this box' });
+s.markOpen(BOX2);
+ok('a move needs both boxes closed', s.moveRoot(BOX, 0, BOX2), { ok: false, why: 'both boxes must be closed' });
+s.markClosed(BOX2);
+ok('a move into an unknown box is refused', s.moveRoot(BOX, 0, '9-9-9-9'), { ok: false, why: 'unknown target box' });
+ok('a move out of an unknown box is refused', s.moveRoot('9-9-9-9', 0, BOX), { ok: false, why: 'unknown box' });
+
+ok('a node with a body is not edited in place', s.editNode(BOX, 0, 0, { quantity: 2 }), { ok: false, why: 'the item carries mod state; reset it to edit' });
+const ed = s.editNode(BOX, 0, 0, { quantity: 2, health: 50, reset: true }, { at: '2026-09-19 08:02:00', admin: 'owner' });
+ok('with reset the edit is taken', [ed.ok, ed.reset, ed.type], [true, true, 'Paper']);
+ok('the descriptor carries the edit and the body is gone', (() => {
+  const c = s.currentChunks(BOX).chunks[0];
+  const p = parseChunk(c);
+  return [p.nodes[0].quantity, p.nodes[0].health, p.nodes[0].hasBlob, c.length - p.bodyOffset];
+})(), [2, 50, 0, 0]);
+ok('the version notes the reset and the admin', s.versionsOf(BOX)[0].note, 'edit Paper (state reset) by owner');
+ok('the index follows the edit', [s.itemsOf(BOX)[0].quantity, s.itemsOf(BOX)[0].health, s.itemsOf(BOX)[0].has_blob], [2, 50, 0]);
+ok('a bodiless node is edited in place, one field at a time', [s.editNode(BOX, 0, 0, { health: 20 }).ok, parseChunk(s.currentChunks(BOX).chunks[0]).nodes[0].quantity], [true, 2]);
+ok('bad numbers are refused', [s.editNode(BOX, 0, 0, { quantity: -1 }).why, s.editNode(BOX, 0, 0, { health: 'x' }).why, s.editNode(BOX, 0, 0, {}).why], ['bad quantity', 'bad health', 'nothing to change']);
+ok('an unknown node is refused', s.editNode(BOX, 0, 7, { quantity: 1 }), { ok: false, why: 'no such node of this root' });
+ok('an unknown root is refused', s.editNode(BOX, 3, 0, { quantity: 1 }), { ok: false, why: 'no such root of this box' });
+s.markOpen(BOX);
+ok('an open box is not edited', s.editNode(BOX, 0, 0, { quantity: 1 }), { ok: false, why: 'the box is open; close it first' });
+s.markClosed(BOX);
+
+s.events([{ at: '2026-09-19 08:03:00', kind: 'take', box: BOX, uid: '7656', name: 'Stalker', type: 'Paper', qty: 1 }], 'stand');
+ok('lastTake names who took the class last', [s.lastTake('Paper').uid, s.lastTake('Paper').name, s.lastTake('Paper').box_id], ['7656', 'Stalker', BOX]);
+ok('lastTake of a class nobody took is null', s.lastTake('Rag'), null);
+
+const preview = s.keepPreview({ versionsDays: 0, eventsDays: 0, now: new Date('2030-01-01T00:00:00Z') });
+ok('keepPreview counts what keep would delete', [preview.versions > 0, preview.events > 0], [true, true]);
+ok('and deletes nothing', s.versionsOf(BOX).length > 1, true);
+ok('a far cut-off counts nothing', s.keepPreview({ versionsDays: 36500, eventsDays: 36500 }), { versions: 0, events: 0 });
+
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();
 rmSync(dir, { recursive: true, force: true });
