@@ -108,8 +108,8 @@ const cfg = {
   storageKeepVersionsDays: days('STORAGE_KEEP_VERSIONS_DAYS', 14),
   storageKeepEventsDays: days('STORAGE_KEEP_EVENTS_DAYS', 90),
   // The storage admin web (design section 15): its own port on loopback,
-  // 0 = off; Discord sign-in when a client secret is given, and then the
-  // page's public address, which the sign-in comes back to.
+  // 0 = off; ADMIN_URL is the page's outside address and turns Discord
+  // sign-in on, which then needs the client secret.
   adminPort: Number(process.env.ADMIN_PORT ?? 8788) || 0,
   adminUrl: String(process.env.ADMIN_URL || '').trim().replace(/\/+$/, ''),
   oauthSecret: String(process.env.DISCORD_CLIENT_SECRET || '').trim(),
@@ -157,7 +157,7 @@ const dbBytes = (path) => {
 };
 const storageHealth = () => ({
   xchg: !!xchg,
-  auth: !!cfg.oauthSecret,
+  auth: !!cfg.adminUrl,
   dbBytes: dbBytes(cfg.dbPath),
   servers: [...lastPoll].map(([id, at]) => ({ id, at })),
   keep: storage.keepPreview({ versionsDays: cfg.storageKeepVersionsDays, eventsDays: cfg.storageKeepEventsDays }),
@@ -1721,9 +1721,10 @@ function rolesFor(uid) {
 http = new HttpSide(cfg, { routes, drain, discordOn: () => discord.configured });
 
 // The admin web (design section 15). Loopback, its own port; Discord
-// sign-in only with DISCORD_CLIENT_SECRET, and then the rest of the
-// sign-in must be there too, or the web stays down and says which key --
-// the bridge itself goes on, as it does over a bad exchange directory.
+// sign-in when ADMIN_URL gives the page an outside address, and then
+// the rest of the sign-in must be there too, or the web stays down and
+// says which key -- the bridge itself goes on, as it does over a bad
+// exchange directory.
 let web = null;
 if (process.env.ADMIN_PORT !== undefined && process.env.ADMIN_PORT !== '' && !Number.isFinite(Number(process.env.ADMIN_PORT))) {
   console.error('[admin] ADMIN_PORT is not a number: the admin web is off');
@@ -1740,16 +1741,16 @@ if (cfg.adminPort > 0) {
       console.error('[admin] ADMIN_URL is not a URL: the admin web stays down');
     }
   }
-  if (webUp && cfg.oauthSecret) {
+  if (webUp && cfg.adminUrl) {
     const missing = [
+      ['DISCORD_CLIENT_SECRET', cfg.oauthSecret],
       ['DISCORD_CLIENT_ID', cfg.clientId],
       ['DISCORD_GUILD_ID', cfg.guildId],
-      ['ADMIN_URL', cfg.adminUrl],
       ['DISCORD_ADMIN_ROLE_ID', cfg.adminRoleIds.length ? 'set' : ''],
     ].filter(([, v]) => !v).map(([k]) => k);
     if (missing.length) {
       webUp = false;
-      console.error(`[admin] DISCORD_CLIENT_SECRET is set but ${missing.join(', ')} is not: the admin web stays down`);
+      console.error(`[admin] ADMIN_URL is set but ${missing.join(', ')} is not: the admin web stays down`);
     } else {
       auth = storageAuth({ clientId: cfg.clientId, clientSecret: cfg.oauthSecret, guildId: cfg.guildId, roleIds: cfg.adminRoleIds, adminUrl: cfg.adminUrl });
     }

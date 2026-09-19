@@ -134,23 +134,24 @@ or throw away a parked root -- ask for confirmation, take effect at the box's ne
 open, and are events with the admin's name. Plain HTML and JavaScript out of `web/`,
 Ukrainian and English by a switch in the header, no build step.
 
-Sign-in is optional. Without `DISCORD_CLIENT_SECRET` the page has no sign-in and
-asks for a name to sign the log with; it is safe only because nothing but this
-machine reaches 127.0.0.1 -- do not put a reverse proxy in front of it in that
-mode. With the secret the page sends admins to Discord and admits holders of one
-of the roles in `DISCORD_ADMIN_ROLE_ID` (several ids, comma-separated); then
-`DISCORD_CLIENT_ID`, `DISCORD_GUILD_ID` and `ADMIN_URL` are required, and the
-Developer Portal must list `<ADMIN_URL>/auth/callback` under OAuth2 -> Redirects.
-Sessions last twelve hours and live in memory: a restart signs everyone out. A
-reverse proxy in front of the page must pass the path without a prefix, e.g.
-`location /storage/ { proxy_pass http://127.0.0.1:8788/; }`.
+Sign-in is optional and turns on with `ADMIN_URL`, the page's address as a browser
+sees it. Without it the page has no sign-in and asks for a name to sign the log
+with; it is safe only because nothing but this machine reaches 127.0.0.1 -- do
+not put a reverse proxy in front of it in that mode. With `ADMIN_URL` the page
+sends admins to Discord and admits holders of one of the roles in
+`DISCORD_ADMIN_ROLE_ID` (several ids, comma-separated); then
+`DISCORD_CLIENT_SECRET`, `DISCORD_CLIENT_ID` and `DISCORD_GUILD_ID` are required,
+and the Developer Portal must list `<ADMIN_URL>/auth/callback` under OAuth2 ->
+Redirects. Sessions last twelve hours and live in memory: a restart signs
+everyone out. A reverse proxy in front of the page must pass the path without a
+prefix, e.g. `location /storage/ { proxy_pass http://127.0.0.1:8788/; }`.
 
 | `.env` key | Default | Meaning |
 |---|---|---|
 | `ADMIN_PORT` | 8788 | the admin page's port, on 127.0.0.1; 0 turns the page off |
-| `DISCORD_CLIENT_SECRET` | unset | turns Discord sign-in on (Developer Portal -> OAuth2); secret |
-| `ADMIN_URL` | unset | the page's address as a browser sees it; required with the secret |
-| `DISCORD_ADMIN_ROLE_ID` | unset | the admin roles, comma-separated; required with the secret |
+| `ADMIN_URL` | unset | the page's address as a browser sees it; turns Discord sign-in on |
+| `DISCORD_CLIENT_SECRET` | unset | Developer Portal -> OAuth2; required with ADMIN_URL; secret |
+| `DISCORD_ADMIN_ROLE_ID` | unset | the admin roles, comma-separated; required with ADMIN_URL |
 
 ## State
 
@@ -192,7 +193,8 @@ Set `BRIDGE_HOST=0.0.0.0` only behind a TLS terminator.
 The storage admin page listens on 127.0.0.1 only. It checks the `Host` header, wants
 a custom header and a JSON body on its api and refuses cross-site fetches, so a
 browser on the same machine cannot be turned against it by a page it visits; without
-Discord sign-in that is all there is, which is why that mode must never be exposed.
+`ADMIN_URL` and its Discord sign-in that is all there is, which is why that mode
+must never be exposed.
 
 ## Status
 
