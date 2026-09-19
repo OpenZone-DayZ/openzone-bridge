@@ -111,12 +111,17 @@ its boxes as unavailable.
 
 `node scripts/storage.mjs <command>` talks to the running bridge with the shared
 secret from `.env` (never printed). Reads: `boxes`, `box <id>`, `history <id>`,
-`player <steam64>`, `find <class>`, `parked`, `version <n>`. Changes to a closed box,
-taking effect at its next open: `rollback <id> <version>`, `unpark <parkedId>`,
-`discard <parkedId>`, `give <id> <class> [qty]`, `empty <id>`. Live, answered by the
-engine within a few seconds: `close <id>`, `remove <id>` (a closed box only),
-`report <id>`; `result <ref>` reads the answer later. Every change is an event with
-the admin's name.
+`player <steam64>`, `find <class>` (with who took it last), `parked`, `version <n>`,
+`diff <a> <b>` (the classes that go and come between two versions), `health`. Changes
+to a closed box, taking effect at its next open: `rollback <id> <version>`,
+`unpark <parkedId>`, `discard <parkedId>`, `give <id> <class> [qty]`, `empty <id>`,
+`shelve <id> <root>` (a root onto the shelf of parked roots), `move <from> <root> <to>`
+(a root into another closed box; it takes a free cell at that box's next open),
+`edit <id> <root> <node> [qty=N] [health=N] [reset]` (quantity and health of one item;
+an item that carries mod state needs `reset`, which drops the mod state of its whole
+tree). Live, answered by the engine within a few seconds: `close <id>`, `remove <id>`
+(a closed box only), `report <id>`; `result <ref>` reads the answer later. Every
+change is an event with the admin's name.
 
 ## State
 

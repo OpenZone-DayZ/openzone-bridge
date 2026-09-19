@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { Store } from '../src/store.js';
 import { StorageStore } from '../src/storage-store.js';
 import { Xchg } from '../src/storage-xchg.js';
-import { storageAdmin } from '../src/storage-admin.js';
+import { storageAdmin, diffRoots } from '../src/storage-admin.js';
 import { buildChunk, parseChunk } from '../src/storage-wire.js';
 
 const path = join(tmpdir(), `oz-storage-admin-${process.pid}.sqlite`);
@@ -183,6 +183,58 @@ s.ingestClose({ boxId: BOX, header: header('2026-09-19 08:04:00'), chunks: [c0, 
 const parked3 = s.park({ boxId: BOX, rootIdx: 1, reason: 'admin', at: '2026-09-19 08:04:02' });
 s.empty(BOX, { at: '2026-09-19 08:04:03' });
 ok('a parked root returned into an emptied box brings back the save version it was parked under', [s.unparkOne(parked3.parked, '2026-09-19 08:04:04').ok, s.versionsOf(BOX)[0].save_version], [true, 142]);
+
+console.log('admin ops: the shelf, move, edit, diff, health');
+
+const admin2 = storageAdmin({ store: s, xchg: x, push: (o) => pushed.push(o), health: () => ({ xchg: true, dbBytes: 1, servers: [], keep: { versions: 0, events: 0 }, auth: false }) });
+s.ingestClose({ boxId: BOX, header: header('2026-09-19 09:00:00'), chunks: [c0, c1], at: '2026-09-19 09:00:01' });
+s.ingestClose({ boxId: BOX2, header: header('2026-09-19 09:00:00'), chunks: [], at: '2026-09-19 09:00:01' });
+
+const vX = s.currentChunks(BOX).version;
+s.give(BOX, 'Rag', 1, { at: '2026-09-19 09:01:00' });
+const vY = s.currentChunks(BOX).version;
+ok('diff from the newer to the older version says what goes', admin2.diff({ a: vY, b: vX }), { ok: true, a: vY, b: vX, gone: [{ type: 'Rag', n: 1 }], came: [] });
+ok('and the other way what comes', admin2.diff({ a: vX, b: vY }).came, [{ type: 'Rag', n: 1 }]);
+ok('a version against itself differs in nothing', admin2.diff({ a: vX, b: vX }), { ok: true, a: vX, b: vX, gone: [], came: [] });
+ok('diffRoots counts nested nodes too, sorted by class', diffRoots([{ rootIdx: 0, nodes: pouch }], []), { gone: [{ type: 'PlateCarrierPouches', n: 1 }, { type: 'SmallProtectorCase', n: 1 }], came: [] });
+ok('diff of unknown versions is empty, not an error', admin2.diff({ a: 999, b: 998 }), { ok: true, a: 999, b: 998, gone: [], came: [] });
+
+ok('find names who took the class last', admin2.find({ type: 'Paper' }).last.name, 'Stalker');
+ok('find of a class nobody took has no last', admin2.find({ type: 'Rag' }).last, null);
+
+writeFileSync(x.cachePath(BOX), 'cache');
+const sh = admin2.shelve({ id: BOX, root: 1, admin: 'owner' });
+ok('shelve parks a root of a closed box with the reason admin', [sh.ok, sh.type, s.parked(BOX)[0].reason, s.parked(BOX)[0].id === sh.parked], [true, 'PlateCarrierPouches', 'admin', true]);
+ok('shelve drops the cache and is an event with the admin', [existsSync(x.cachePath(BOX)), s.eventsOf(BOX)[0].kind, s.eventsOf(BOX)[0].admin], [false, 'admin_shelve', 'owner']);
+ok('shelve of a root that is not there is refused', admin2.shelve({ id: BOX, root: 9, admin: 'owner' }), { ok: false, why: 'no such root of this box' });
+ok('shelve of a bad index is refused', admin2.shelve({ id: BOX, root: -1, admin: 'owner' }), { ok: false, why: 'bad root index' });
+ok('shelve of an unknown box is refused', admin2.shelve({ id: '9-9-9-9', root: 0, admin: 'owner' }), { ok: false, why: 'unknown box' });
+s.markOpen(BOX);
+ok('shelve needs a closed box', admin2.shelve({ id: BOX, root: 0, admin: 'owner' }), { ok: false, why: 'the box is open; close it first' });
+s.markClosed(BOX);
+
+writeFileSync(x.cachePath(BOX), 'cache');
+writeFileSync(x.cachePath(BOX2), 'cache');
+const mv2 = admin2.move({ from: BOX, root: 0, to: BOX2, admin: 'owner' });
+ok('move answers both versions and the type', [mv2.ok, mv2.type, typeof mv2.fromVersion, typeof mv2.toVersion], [true, 'Paper', 'number', 'number']);
+ok('move drops both caches', [existsSync(x.cachePath(BOX)), existsSync(x.cachePath(BOX2))], [false, false]);
+ok('move is an event on both boxes', [s.eventsOf(BOX)[0].kind, s.eventsOf(BOX2)[0].kind, s.eventsOf(BOX2)[0].admin], ['admin_move', 'admin_move', 'owner']);
+ok('move refuses in the store\'s words', admin2.move({ from: BOX, root: 0, to: BOX, admin: 'owner' }), { ok: false, why: 'the same box' });
+
+writeFileSync(x.cachePath(BOX2), 'cache');
+ok('edit without reset on an item with a body is refused in the store\'s words', admin2.edit({ id: BOX2, root: 0, node: 0, quantity: 3, admin: 'owner' }), { ok: false, why: 'the item carries mod state; reset it to edit' });
+ok('the refusal left the cache alone', existsSync(x.cachePath(BOX2)), true);
+const e1 = admin2.edit({ id: BOX2, root: 0, node: 0, quantity: 3, reset: true, admin: 'owner' });
+ok('edit with reset answers the version', [e1.ok, e1.reset, e1.type], [true, true, 'Paper']);
+ok('edit drops the cache and is an event', [existsSync(x.cachePath(BOX2)), s.eventsOf(BOX2)[0].kind, s.eventsOf(BOX2)[0].note.includes('state reset')], [false, 'admin_edit', true]);
+ok('edit takes reset as a string too', admin2.edit({ id: BOX2, root: 0, node: 0, health: 40, reset: 'true', admin: 'owner' }).ok, true);
+
+const hl = admin2.health();
+ok('health carries the bridge facts and the open boxes', [hl.ok, hl.xchg, hl.dbBytes, hl.auth, hl.open.length], [true, true, 1, false, 0]);
+s.markOpen(BOX);
+ok('an open box shows in health', admin2.health().open.map((b) => b.box_id), [BOX]);
+s.markClosed(BOX);
+ok('health without a health function still answers', admin.health().ok, true);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();

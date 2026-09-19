@@ -8,7 +8,26 @@
 import { randomBytes } from 'node:crypto';
 import { stampNow } from './storage-wire.js';
 
-export function storageAdmin({ store, xchg, push }) {
+// The difference between two versions as classes, counted: what a rollback
+// from `a` to `b` makes disappear and appear. Every node of every root
+// counts, not only the roots, so a pouch that lost its contents shows them.
+export function diffRoots(aRoots, bRoots) {
+  const count = (roots) => {
+    const m = new Map();
+    for (const r of roots) for (const n of r.nodes) m.set(n.type, (m.get(n.type) || 0) + 1);
+    return m;
+  };
+  const a = count(aRoots);
+  const b = count(bRoots);
+  const gone = [];
+  const came = [];
+  for (const [type, n] of a) if (n > (b.get(type) || 0)) gone.push({ type, n: n - (b.get(type) || 0) });
+  for (const [type, n] of b) if (n > (a.get(type) || 0)) came.push({ type, n: n - (a.get(type) || 0) });
+  const byType = (x, y) => (x.type < y.type ? -1 : x.type > y.type ? 1 : 0);
+  return { gone: gone.sort(byType), came: came.sort(byType) };
+}
+
+export function storageAdmin({ store, xchg, push, health }) {
   const bad = (why) => ({ ok: false, why });
   const limitOf = (v) => Math.min(1000, Math.max(1, Math.trunc(Number(v)) || 100));
   const dropCache = (id) => {
@@ -50,7 +69,7 @@ export function storageAdmin({ store, xchg, push }) {
 
     player: ({ uid, limit }) => ({ ok: true, events: store.eventsBy(String(uid || ''), limitOf(limit)) }),
 
-    find: ({ type }) => ({ ok: true, items: store.find(String(type || '')) }),
+    find: ({ type }) => ({ ok: true, items: store.find(String(type || '')), last: store.lastTake(String(type || '')) }),
 
     parked: () => ({ ok: true, parked: store.parked() }),
 
@@ -94,6 +113,55 @@ export function storageAdmin({ store, xchg, push }) {
       record('admin_empty', String(id), admin, `version ${r.version}`);
       return r;
     },
+
+    diff: ({ a, b }) => {
+      const av = Number(a) || 0;
+      const bv = Number(b) || 0;
+      return { ok: true, a: av, b: bv, ...diffRoots(store.itemsOfVersion(av), store.itemsOfVersion(bv)) };
+    },
+
+    // A root of a closed box onto the shelf: parked with the reason admin,
+    // its bytes intact, to be returned or thrown away later.
+    shelve: ({ id, root, admin }) => {
+      const box = known(id);
+      if (!box) return bad('unknown box');
+      if (box.status !== 'closed') return bad('the box is open; close it first');
+      const idx = Number(root);
+      if (!Number.isInteger(idx) || idx < 0) return bad('bad root index');
+      const r = store.park({ boxId: box.box_id, rootIdx: idx, reason: 'admin', note: `shelved by ${admin || 'admin'}` });
+      if (!r) return bad('no such root of this box');
+      dropCache(box.box_id);
+      record('admin_shelve', box.box_id, admin, `root ${idx} (${r.type}) to the shelf as parked ${r.parked}, version ${r.version}`);
+      return { ok: true, ...r };
+    },
+
+    move: ({ from, root, to, admin }) => {
+      const r = store.moveRoot(String(from || ''), Number(root), String(to || ''), { admin });
+      if (!r.ok) return r;
+      dropCache(String(from));
+      dropCache(String(to));
+      record('admin_move', String(from), admin, `${r.type} to ${to}, version ${r.fromVersion}`);
+      record('admin_move', String(to), admin, `${r.type} from ${from}, version ${r.toVersion}`);
+      return r;
+    },
+
+    edit: ({ id, root, node, quantity, health: hp, reset, admin }) => {
+      const doReset = reset === true || reset === 1 || reset === 'true' || reset === '1';
+      const r = store.editNode(String(id || ''), Number(root), Number(node), { quantity, health: hp, reset: doReset }, { admin });
+      if (!r.ok) return r;
+      dropCache(String(id));
+      record('admin_edit', String(id), admin, `${r.type}${r.reset ? ', state reset' : ''}: quantity ${quantity ?? '-'}, health ${hp ?? '-'}, version ${r.version}`);
+      return r;
+    },
+
+    // The bridge's own state for the health page: what index.js knows
+    // (the exchange directory, the database, the servers, the clean-up) plus
+    // the boxes SQL believes open -- a live open, or a transition cut short.
+    health: () => ({
+      ok: true,
+      ...(health ? health() : {}),
+      open: store.boxes().filter((b) => b.status === 'open').map((b) => ({ box_id: b.box_id, class: b.class, last_seen_at: b.last_seen_at })),
+    }),
 
     close: ({ id, admin }) => live('close', id, admin),
     remove: ({ id, admin }) => live('remove', id, admin),

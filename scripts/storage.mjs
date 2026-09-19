@@ -15,6 +15,11 @@
 //   node scripts/storage.mjs discard <parkedId>
 //   node scripts/storage.mjs give <id> <class> [qty]
 //   node scripts/storage.mjs empty <id>
+//   node scripts/storage.mjs shelve <id> <root>            (a root of a closed box onto the shelf)
+//   node scripts/storage.mjs move <from> <root> <to>       (a root into another closed box, unplaced)
+//   node scripts/storage.mjs edit <id> <root> <node> [qty=N] [health=N] [reset]
+//   node scripts/storage.mjs diff <a> <b>                  (classes that go and come from version a to b)
+//   node scripts/storage.mjs health
 //   node scripts/storage.mjs close <id>       (live: the engine closes it now)
 //   node scripts/storage.mjs remove <id>      (live: the engine deletes a closed box)
 //   node scripts/storage.mjs report <id>      (live: where and how it is)
@@ -34,8 +39,9 @@ const ADMIN = process.env.USERNAME || process.env.USER || 'cli';
 const [cmd, ...args] = process.argv.slice(2);
 
 const USAGE = `usage: node scripts/storage.mjs <command> [args]
-  boxes | box <id> | history <id> [n] | player <steam64> [n] | find <class> | parked | version <n>
+  boxes | box <id> | history <id> [n] | player <steam64> [n] | find <class> | parked | version <n> | diff <a> <b> | health
   rollback <id> <version> | unpark <parkedId> | discard <parkedId> | give <id> <class> [qty] | empty <id>
+  shelve <id> <root> | move <from> <root> <to> | edit <id> <root> <node> [qty=N] [health=N] [reset]
   close <id> | remove <id> | report <id> | result <ref>`;
 
 if (!cmd || cmd === 'help' || cmd === '--help') {
@@ -122,8 +128,9 @@ switch (cmd) {
   }
   case 'find': {
     need(1, 'a class');
-    const { items } = await call('find', { type: args[0] });
+    const { items, last } = await call('find', { type: args[0] });
     table(items, ['box_id', 'status', 'box_class', 'pos', 'root_idx', 'node_idx', 'row', 'col', 'quantity', 'health']);
+    if (last) console.log(`\nlast taken by ${last.name || last.uid} at ${last.at} from box ${last.box_id}`);
     break;
   }
   case 'parked': {
@@ -166,6 +173,54 @@ switch (cmd) {
     need(1, 'an id');
     const r = await call('empty', { id: args[0] });
     console.log(`emptied: version ${r.version}`);
+    break;
+  }
+  case 'shelve': {
+    need(2, 'an id and a root index');
+    const r = await call('shelve', { id: args[0], root: args[1] });
+    console.log(`${r.type} is on the shelf as parked ${r.parked}; the box is at version ${r.version}`);
+    break;
+  }
+  case 'move': {
+    need(3, 'a source id, a root index and a target id');
+    const r = await call('move', { from: args[0], root: args[1], to: args[2] });
+    console.log(`${r.type} moved: ${args[0]} is at version ${r.fromVersion}, ${args[2]} at version ${r.toVersion}; it takes a free cell at the next open`);
+    break;
+  }
+  case 'edit': {
+    need(3, 'an id, a root index and a node index');
+    const extra = {};
+    for (const a of args.slice(3)) {
+      if (a === 'reset') extra.reset = true;
+      else if (a.startsWith('qty=')) extra.quantity = a.slice(4);
+      else if (a.startsWith('health=')) extra.health = a.slice(7);
+      else {
+        console.error(`edit: unknown argument ${a}\n${USAGE}`);
+        process.exit(2);
+      }
+    }
+    const r = await call('edit', { id: args[0], root: args[1], node: args[2], ...extra });
+    console.log(`${r.type} edited${r.reset ? ', mod state reset' : ''}: version ${r.version}; it takes effect at the next open`);
+    break;
+  }
+  case 'diff': {
+    need(2, 'two version ids');
+    const r = await call('diff', { a: args[0], b: args[1] });
+    console.log(`from version ${r.a} to version ${r.b}:`);
+    for (const g of r.gone) console.log(`  - ${g.type} x${g.n}`);
+    for (const c of r.came) console.log(`  + ${c.type} x${c.n}`);
+    if (!r.gone.length && !r.came.length) console.log('  (the same classes)');
+    break;
+  }
+  case 'health': {
+    const r = await call('health', {});
+    console.log(`exchange directory: ${r.xchg ? 'ready' : 'not configured'}`);
+    console.log(`sign-in on the admin page: ${r.auth ? 'Discord' : 'none, loopback only'}`);
+    console.log(`database: ${r.dbBytes} bytes`);
+    console.log(`the next clean-up removes ${r.keep ? r.keep.versions : 0} version(s), ${r.keep ? r.keep.events : 0} event(s)`);
+    for (const srv of r.servers || []) console.log(`server ${srv.id}: last poll ${srv.at}`);
+    console.log('\nboxes SQL believes open:');
+    table(r.open, ['box_id', 'class', 'last_seen_at']);
     break;
   }
   case 'close':
