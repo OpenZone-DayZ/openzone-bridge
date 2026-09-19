@@ -123,6 +123,35 @@ tree). Live, answered by the engine within a few seconds: `close <id>`, `remove 
 (a closed box only), `report <id>`; `result <ref>` reads the answer later. Every
 change is an event with the admin's name.
 
+### The admin web
+
+`ADMIN_PORT` (8788) serves the storage admin page on **127.0.0.1 only**: the boxes;
+a box's grid, its contents as a tree and a filter by class; history with the
+difference between any version and the current one; a player's takings; a class
+across the server and who took it last; the shelf of parked roots; the bridge's
+health. Changes to a closed box -- rollback, shelf, move, edit, give, empty, return
+or throw away a parked root -- ask for confirmation, take effect at the box's next
+open, and are events with the admin's name. Plain HTML and JavaScript out of `web/`,
+Ukrainian and English by a switch in the header, no build step.
+
+Sign-in is optional. Without `DISCORD_CLIENT_SECRET` the page has no sign-in and
+asks for a name to sign the log with; it is safe only because nothing but this
+machine reaches 127.0.0.1 -- do not put a reverse proxy in front of it in that
+mode. With the secret the page sends admins to Discord and admits holders of one
+of the roles in `DISCORD_ADMIN_ROLE_ID` (several ids, comma-separated); then
+`DISCORD_CLIENT_ID`, `DISCORD_GUILD_ID` and `ADMIN_URL` are required, and the
+Developer Portal must list `<ADMIN_URL>/auth/callback` under OAuth2 -> Redirects.
+Sessions last twelve hours and live in memory: a restart signs everyone out. A
+reverse proxy in front of the page must pass the path without a prefix, e.g.
+`location /storage/ { proxy_pass http://127.0.0.1:8788/; }`.
+
+| `.env` key | Default | Meaning |
+|---|---|---|
+| `ADMIN_PORT` | 8788 | the admin page's port, on 127.0.0.1; 0 turns the page off |
+| `DISCORD_CLIENT_SECRET` | unset | turns Discord sign-in on (Developer Portal -> OAuth2); secret |
+| `ADMIN_URL` | unset | the page's address as a browser sees it; required with the secret |
+| `DISCORD_ADMIN_ROLE_ID` | unset | the admin roles, comma-separated; required with the secret |
+
 ## State
 
 Everything the bridge remembers -- account links, conversation keys, the chat
@@ -159,6 +188,11 @@ The listener binds **loopback only** unless `BRIDGE_HOST` says otherwise: a brid
 the same host as the game server needs nothing else, and a bridge that answered every
 interface offered every player's private conversation to whoever guessed one string.
 Set `BRIDGE_HOST=0.0.0.0` only behind a TLS terminator.
+
+The storage admin page listens on 127.0.0.1 only. It checks the `Host` header, wants
+a custom header and a JSON body on its api and refuses cross-site fetches, so a
+browser on the same machine cannot be turned against it by a page it visits; without
+Discord sign-in that is all there is, which is why that mode must never be exposed.
 
 ## Status
 

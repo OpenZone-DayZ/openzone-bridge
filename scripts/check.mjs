@@ -10,8 +10,14 @@ import { execFileSync } from 'node:child_process';
 let bad = 0;
 let seen = 0;
 
-for (const dir of ['src', 'test', 'scripts']) {
-  for (const name of readdirSync(dir)) {
+for (const dir of ['src', 'test', 'scripts', 'web']) {
+  let names = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    continue; // web/ arrives with the admin page
+  }
+  for (const name of names) {
     if (!/\.m?js$/.test(name)) continue;
     seen++;
     try {

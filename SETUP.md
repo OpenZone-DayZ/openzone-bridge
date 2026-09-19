@@ -116,6 +116,11 @@ openssl rand -hex 32
 - `.env` → `STORAGE_XCHG_DIR` — only on a host that also runs the DayZ server with
   `OpenZone_Storage`: the server profile's `OpenZone/Storage/xchg` directory.
   `STORAGE_KEEP_VERSIONS_DAYS` (14) and `STORAGE_KEEP_EVENTS_DAYS` (90) bound the history.
+- `.env` → `ADMIN_PORT` (8788): the storage admin page, on this machine only. To
+  sign admins in through Discord: Developer Portal → OAuth2 → Reset Secret →
+  `DISCORD_CLIENT_SECRET`; add `<ADMIN_URL>/auth/callback` under Redirects, where
+  `ADMIN_URL` is the page's address as a browser sees it; `DISCORD_ADMIN_ROLE_ID`
+  lists the admin roles, comma-separated.
 
 `DISCORD_PARENT_CHANNEL_ID` is **required** — the bridge refuses to start without
 it. Every private conversation is a thread, and a thread needs a channel to hang

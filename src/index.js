@@ -20,6 +20,11 @@ import { Xchg } from './storage-xchg.js';
 import { storageRoutes } from './storage-routes.js';
 import { storageAdmin } from './storage-admin.js';
 import { runKeep } from './storage-keep.js';
+import { storageAuth } from './storage-auth.js';
+import { storageWeb } from './storage-web.js';
+import { statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './history.js';
 import { fillMirror } from './mirror.js';
 import { DiscordSide } from './discord.js';
@@ -91,15 +96,23 @@ const cfg = {
   holdSeconds: Number(process.env.POLL_HOLD_SECONDS || 8),
   // The store (TZ-2 R6.1). Path from .env, never logged (R6.3).
   dbPath: process.env.BRIDGE_DB || './state/bridge.sqlite',
-  // Optional: a Discord role that counts as bridge admin alongside the
-  // Administrator permission (personas, /openzone).
-  adminRoleId: process.env.DISCORD_ADMIN_ROLE_ID || '',
+  // Optional: the Discord roles whose holders count as bridge admins
+  // alongside the Administrator permission (personas, /openzone) and, with
+  // sign-in on, as admins of the storage web. One or more ids, separated by
+  // commas or spaces.
+  adminRoleIds: String(process.env.DISCORD_ADMIN_ROLE_ID || '').split(/[\s,;]+/).filter(Boolean),
   // Storage boxes (design 2026-09-19). The exchange directory is the game
   // server's $profile:OpenZone/Storage/xchg; unset, the storage routes
   // refuse and boxes stay unavailable in the game.
   storageXchgDir: process.env.STORAGE_XCHG_DIR || '',
   storageKeepVersionsDays: days('STORAGE_KEEP_VERSIONS_DAYS', 14),
   storageKeepEventsDays: days('STORAGE_KEEP_EVENTS_DAYS', 90),
+  // The storage admin web (design section 15): its own port on loopback,
+  // 0 = off; Discord sign-in when a client secret is given, and then the
+  // page's public address, which the sign-in comes back to.
+  adminPort: Number(process.env.ADMIN_PORT ?? 8788) || 0,
+  adminUrl: String(process.env.ADMIN_URL || '').trim().replace(/\/+$/, ''),
+  oauthSecret: String(process.env.DISCORD_CLIENT_SECRET || '').trim(),
 };
 
 const store = new Store(cfg.dbPath);
@@ -128,7 +141,28 @@ const storagePush = (obj) => {
   queuePush(null, obj, 'storage');
   http?.wake();
 };
-const storageAdminOps = storageAdmin({ store: storage, xchg, push: storagePush });
+// When each game server last polled, for the health page: the one sign
+// that the engine side is alive that SQL cannot give.
+const lastPoll = new Map();
+const dbBytes = (path) => {
+  let n = 0;
+  for (const p of [path, `${path}-wal`]) {
+    try {
+      n += statSync(p).size;
+    } catch {
+      // not there yet
+    }
+  }
+  return n;
+};
+const storageHealth = () => ({
+  xchg: !!xchg,
+  auth: !!cfg.oauthSecret,
+  dbBytes: dbBytes(cfg.dbPath),
+  servers: [...lastPoll].map(([id, at]) => ({ id, at })),
+  keep: storage.keepPreview({ versionsDays: cfg.storageKeepVersionsDays, eventsDays: cfg.storageKeepEventsDays }),
+});
+const storageAdminOps = storageAdmin({ store: storage, xchg, push: storagePush, health: storageHealth });
 
 // OUR OWN ID FOR A RECORD, and it is deliberately not Discord's (TZ-2 R6.4).
 //
@@ -1374,6 +1408,7 @@ function anyMirrored(kind) {
 }
 
 function drain({ ServerId, Cursor, Uids, Fresh, Mirrors, AdminIds }) {
+  lastPoll.set(String(ServerId || ''), new Date().toISOString());
   if (Array.isArray(AdminIds)) {
     // Said only when it CHANGES, like the mirror list beside it: the roster
     // rides seven polls a minute. The COUNT and not the ids -- who they are
@@ -1684,6 +1719,48 @@ function rolesFor(uid) {
 }
 
 http = new HttpSide(cfg, { routes, drain, discordOn: () => discord.configured });
+
+// The admin web (design section 15). Loopback, its own port; Discord
+// sign-in only with DISCORD_CLIENT_SECRET, and then the rest of the
+// sign-in must be there too, or the web stays down and says which key --
+// the bridge itself goes on, as it does over a bad exchange directory.
+let web = null;
+if (cfg.adminPort > 0) {
+  let auth = null;
+  let webUp = true;
+  let hostOfUrl = '';
+  if (cfg.adminUrl) {
+    try {
+      hostOfUrl = new URL(cfg.adminUrl).host;
+    } catch {
+      webUp = false;
+      console.error('[admin] ADMIN_URL is not a URL: the admin web stays down');
+    }
+  }
+  if (webUp && cfg.oauthSecret) {
+    const missing = [
+      ['DISCORD_CLIENT_ID', cfg.clientId],
+      ['DISCORD_GUILD_ID', cfg.guildId],
+      ['ADMIN_URL', cfg.adminUrl],
+      ['DISCORD_ADMIN_ROLE_ID', cfg.adminRoleIds.length ? 'set' : ''],
+    ].filter(([, v]) => !v).map(([k]) => k);
+    if (missing.length) {
+      webUp = false;
+      console.error(`[admin] DISCORD_CLIENT_SECRET is set but ${missing.join(', ')} is not: the admin web stays down`);
+    } else {
+      auth = storageAuth({ clientId: cfg.clientId, clientSecret: cfg.oauthSecret, guildId: cfg.guildId, roleIds: cfg.adminRoleIds, adminUrl: cfg.adminUrl });
+    }
+  }
+  if (webUp) {
+    web = storageWeb({
+      ops: storageAdminOps,
+      dir: join(dirname(fileURLToPath(import.meta.url)), '..', 'web'),
+      allowedHosts: hostOfUrl ? [hostOfUrl] : [],
+      auth,
+    });
+    await web.listen(cfg.adminPort);
+  }
+}
 
 // A THROW IN A TIMER CALLBACK IS AN UNCAUGHT EXCEPTION, which for Node is
 // fatal: an unguarded keep() would take the whole bridge down with it on
