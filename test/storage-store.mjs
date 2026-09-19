@@ -72,7 +72,7 @@ ok('versions are listed newest first', s.versionsOf(BOX).map((v) => [v.id, v.sou
 ok('a past version is readable through its chunks', s.itemsOfVersion(1).map((r) => [r.rootIdx, r.nodes.map((n) => n.type)]),
   [[0, ['Paper']], [1, ['PlateCarrierPouches', 'SmallProtectorCase']], [2, ['Paper']]]);
 
-const empty = s.ingestClose({ boxId: BOX, header: header('2026-09-19 05:03:00'), chunks: [], why: 'boot' });
+const empty = s.ingestClose({ boxId: BOX, header: header('2026-09-19 05:03:00'), chunks: [], why: 'boot', at: '2026-09-19 05:03:01' });
 ok('a close with no roots is a version too', [empty.version, empty.roots, s.versionsOf(BOX)[0].source], [3, 0, 'boot']);
 ok('an empty current version has no item rows', s.itemsOf(BOX).length, 0);
 
@@ -110,7 +110,7 @@ ok('only roots whose every class is present come back', [back.unparked, back.box
 ok('they come back unplaced, body intact', s.currentChunks(P).chunks.map((c) => [parseChunk(c).nodes[0].type, parseChunk(c).nodes[0].row, hex(c.subarray(parseChunk(c).bodyOffset))]),
   [['Paper', -1, '01'], ['Paper', -1, '03']]);
 ok('the pouch waits for its case', s.parked(P).map((p) => p.type), ['PlateCarrierPouches']);
-const back2 = s.unparkPresent(['Paper', 'PlateCarrierPouches', 'SmallProtectorCase']);
+const back2 = s.unparkPresent(['Paper', 'PlateCarrierPouches', 'SmallProtectorCase'], '2026-09-19 06:03:30');
 ok('and comes back once the case exists', [back2.unparked, s.parked(P).length, s.currentChunks(P).chunks.length], [1, 0, 3]);
 
 console.log('rollback');

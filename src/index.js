@@ -67,6 +67,15 @@ function need(name) {
 const token = String(process.env.DISCORD_BOT_TOKEN || '').trim();
 const needBot = (name) => (token ? need(name) : String(process.env[name] || ''));
 
+// A non-numeric or non-positive override falls back to the default instead
+// of becoming NaN -- a NaN cut-off compares false to every date, and keep()
+// (storage-keep.js) would then treat every non-current version and every
+// event as older than it, deleting the whole history on the first run.
+const days = (name, dflt) => {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : dflt;
+};
+
 const cfg = {
   token,
   clientId: needBot('DISCORD_CLIENT_ID'),
@@ -88,16 +97,26 @@ const cfg = {
   // server's $profile:OpenZone/Storage/xchg; unset, the storage routes
   // refuse and boxes stay unavailable in the game.
   storageXchgDir: process.env.STORAGE_XCHG_DIR || '',
-  storageKeepVersionsDays: Number(process.env.STORAGE_KEEP_VERSIONS_DAYS || 14),
-  storageKeepEventsDays: Number(process.env.STORAGE_KEEP_EVENTS_DAYS || 90),
+  storageKeepVersionsDays: days('STORAGE_KEEP_VERSIONS_DAYS', 14),
+  storageKeepEventsDays: days('STORAGE_KEEP_EVENTS_DAYS', 90),
 };
 
 const store = new Store(cfg.dbPath);
 const storage = new StorageStore(store);
-const xchg = cfg.storageXchgDir ? new Xchg(cfg.storageXchgDir) : null;
-if (xchg) {
-  const swept = xchg.sweep(storage.knownIds());
-  console.log(`[storage] exchange directory ready${swept.length ? `, swept ${swept.length} file(s)` : ''}`);
+// A BAD OR UNMOUNTED DIRECTORY MUST NOT STOP THE WHOLE BRIDGE. This used to
+// let `new Xchg` and the boot sweep throw straight out of module load -- a
+// typo'd path or a share not yet mounted killed chat, news and roles along
+// with storage. Now storage alone refuses, and says why.
+let xchg = null;
+if (cfg.storageXchgDir) {
+  try {
+    xchg = new Xchg(cfg.storageXchgDir);
+    const swept = xchg.sweep(storage.knownIds());
+    console.log(`[storage] exchange directory ready${swept.length ? `, swept ${swept.length} file(s)` : ''}`);
+  } catch (e) {
+    xchg = null;
+    console.error(`[storage] STORAGE_XCHG_DIR is not usable (${e.code || e.message}): storage routes refuse until it is`);
+  }
 } else {
   console.log('[storage] STORAGE_XCHG_DIR is not set: storage routes refuse, boxes stay unavailable in the game');
 }
@@ -1657,8 +1676,18 @@ function rolesFor(uid) {
 
 http = new HttpSide(cfg, { routes, drain, discordOn: () => discord.configured });
 
-runKeep(storage, cfg);
-setInterval(() => runKeep(storage, cfg), 60 * 60 * 1000).unref();
+// A THROW IN A TIMER CALLBACK IS AN UNCAUGHT EXCEPTION, which for Node is
+// fatal: an unguarded keep() would take the whole bridge down with it on
+// whatever hour it first hit a bad row instead of just skipping that run.
+const keep = () => {
+  try {
+    runKeep(storage, cfg);
+  } catch (e) {
+    console.warn(`[storage] keep failed: ${e.message}`);
+  }
+};
+keep();
+setInterval(keep, 60 * 60 * 1000).unref();
 
 // The bot command is a wipe started OUTSIDE the game, so the game has to be
 // told: it freezes the character's record and seals his devices on the push.

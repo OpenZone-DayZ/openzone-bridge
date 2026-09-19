@@ -179,8 +179,8 @@ export function typesOf(nodes) {
   return [...new Set(nodes.map((n) => n.type))].sort();
 }
 
-export function buildFile(header, chunks) {
-  const marker = randomMarker();
+export function buildFile(header, chunks, marker = randomMarker()) {
+  if (!Buffer.isBuffer(marker) || marker.length !== MARKER_BYTES) throw new WireError('marker must be 16 bytes');
   let entities = 0;
   for (const c of chunks) entities += parseChunk(c).nodes.length;
   const w = new Writer();

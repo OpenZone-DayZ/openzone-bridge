@@ -4,7 +4,7 @@
 // the body and a 500 says nothing it can act on.
 
 import { Xchg } from './storage-xchg.js';
-import { buildFile, parseFile, stampNow, WireError } from './storage-wire.js';
+import { buildFile, parseChunk, parseFile, stampNow, WireError } from './storage-wire.js';
 
 const list = (v) => (Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : []);
 
@@ -20,8 +20,12 @@ export function storageRoutes({ store, xchg }) {
         .map((b) => ({ id: String(b?.id || ''), class: String(b?.class || ''), state: String(b?.state || ''), entities: Number(b?.entities) || 0, pos: String(b?.pos || '') }))
         .filter((b) => Xchg.isBoxId(b.id));
       const answer = store.boot(boxes);
-      const swept = xchg.sweep(store.knownIds());
-      if (swept.length) console.log(`[storage] boot: swept ${swept.length} stale file(s) from the exchange directory`);
+      try {
+        const swept = xchg.sweep(store.knownIds());
+        if (swept.length) console.log(`[storage] boot: swept ${swept.length} stale file(s) from the exchange directory`);
+      } catch (e) {
+        console.warn(`[storage] boot: sweep failed (${e.code || e.message})`);
+      }
       console.log(`[storage] boot: ${boxes.length} box(es), ${answer.classes.length} class(es) to check`);
       return { ok: true, ...answer };
     },
@@ -94,10 +98,19 @@ export function storageRoutes({ store, xchg }) {
       const info = xchg.cacheInfo(id);
       const valid = info && box.cache_size > 0 && info.size === box.cache_size && info.stamp === cur.stamp;
       if (!valid) {
-        const size = xchg.writeCache(id, buildFile({ saveVer: cur.saveVer, stamp: cur.stamp, boxClass: cur.boxClass, boxId: id }, cur.chunks));
-        store.cacheNote(id, cur.stamp, size);
+        try {
+          const size = xchg.writeCache(id, buildFile({ saveVer: cur.saveVer, stamp: cur.stamp, boxClass: cur.boxClass, boxId: id }, cur.chunks));
+          store.cacheNote(id, cur.stamp, size);
+        } catch (e) {
+          console.warn(`[storage] open of ${id}: cache write failed (${e.code || e.message})`);
+          return bad('the exchange directory is not writable');
+        }
       }
-      return { ok: true, file: xchg.cacheName(id), stamp: cur.stamp, roots: cur.roots, entities: cur.entities };
+      // COMPUTED THE SAME WAY THE FILE ITSELF WOULD ANSWER, not read back off
+      // the version row: the two must never be able to disagree about what
+      // the game is about to parse.
+      const entities = cur.chunks.reduce((n, c) => n + parseChunk(c).nodes.length, 0);
+      return { ok: true, file: xchg.cacheName(id), stamp: cur.stamp, roots: cur.chunks.length, entities };
     },
 
     '/v1/storage/opened': async ({ Json }) => {

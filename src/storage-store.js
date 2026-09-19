@@ -168,7 +168,7 @@ export class StorageStore {
   // ---- plumbing ----
 
   #tx(fn) {
-    this.db.exec('BEGIN');
+    this.db.exec('BEGIN IMMEDIATE');
     try {
       const out = fn();
       this.db.exec('COMMIT');

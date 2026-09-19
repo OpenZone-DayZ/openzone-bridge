@@ -124,10 +124,13 @@ const header = { saveVer: 142, stamp: '2026-09-19 05:15:30', boxClass: 'OZ_Stora
 {
   // A body that contains the first fifteen bytes of the marker must not
   // fool the carving: only the full sixteen end a root.
-  const file = buildFile(header, [buildChunk([paper(0, 0)])]);
-  const marker = parseHeader(file).marker;
-  const tricky = buildFile(header, [buildChunk([paper(0, 0)], Buffer.concat([marker.subarray(0, 15), Buffer.from([0x00])]))]);
-  ok('a near-marker inside a body is carried as body bytes', parseFile(tricky).roots[0].nodes[0].type, 'Paper');
+  const marker = Buffer.from('00112233445566778899aabbccddeeff', 'hex');
+  const near = Buffer.concat([marker.subarray(0, 15), Buffer.from([marker[15] ^ 0xff])]);
+  const tricky = buildFile(header, [buildChunk([paper(0, 0)], near), buildChunk([paper(0, 1)])], marker);
+  const parsed = parseFile(tricky);
+  ok('a near-marker inside a body is carried as body bytes', parsed.roots.map((r) => r.nodes[0].col), [0, 1]);
+  ok('and the body comes back whole', parsed.roots[0].bytes.subarray(parseChunk(parsed.roots[0].bytes).bodyOffset).equals(near), true);
+  ok('a wrong-sized marker is refused', (() => { try { buildFile(header, [], Buffer.alloc(3)); return 'built'; } catch (e) { return e instanceof WireError ? 'refused' : 'wrong error'; } })(), 'refused');
 }
 
 {
