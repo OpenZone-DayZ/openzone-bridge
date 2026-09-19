@@ -12,7 +12,8 @@
 // impossible. Neither is an authority: anything the cache has not seen is
 // simply not shown.
 
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { HOME } from './home.js';
 import { byteClip, stamp } from './clip.js';
 import { Store, snowflake } from './store.js';
 import { StorageStore } from './storage-store.js';
@@ -23,8 +24,7 @@ import { runKeep } from './storage-keep.js';
 import { storageAuth } from './storage-auth.js';
 import { storageWeb } from './storage-web.js';
 import { statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './history.js';
 import { fillMirror } from './mirror.js';
 import { DiscordSide } from './discord.js';
@@ -34,6 +34,9 @@ import { Roles } from './roles.js';
 import { RolesMirror } from './roles-mirror.js';
 import { News, BODY_MAX } from './news.js';
 import { Personas } from './personas.js';
+
+// .env beside the bridge, whatever the current directory is.
+loadEnv({ path: join(HOME, '.env') });
 
 // Store timestamps are UTC written as "YYYY-MM-DD HH:MM:SS". Date.parse
 // reads a space-separated stamp as LOCAL time, which silently shifted the
@@ -94,8 +97,10 @@ const cfg = {
   secret: need('OZ_SHARED_SECRET'),
   // Under ten: see the note in http.js -- the game's request dies at 10 s.
   holdSeconds: Number(process.env.POLL_HOLD_SECONDS || 8),
-  // The store (TZ-2 R6.1). Path from .env, never logged (R6.3).
-  dbPath: process.env.BRIDGE_DB || './state/bridge.sqlite',
+  // The store (TZ-2 R6.1). Path from .env, never logged (R6.3); beside the
+  // bridge by default; a relative BRIDGE_DB is still relative to the
+  // current directory.
+  dbPath: process.env.BRIDGE_DB || join(HOME, 'state', 'bridge.sqlite'),
   // Optional: the Discord roles whose holders count as bridge admins
   // alongside the Administrator permission (personas, /openzone) and, with
   // sign-in on, as admins of the storage web. One or more ids, separated by
@@ -195,6 +200,9 @@ function groupSeq() {
 }
 
 let http;
+// Same reason as http above: the news routes below close over this name,
+// and main() only builds the instance once the store is ready to hand it.
+let news;
 
 const discord = new DiscordSide(cfg, store, (key, msg) => {
   const stored = store.addMessage(key, msg);
@@ -1724,196 +1732,205 @@ function rolesFor(uid) {
   return { ...view, DName: member?.displayName || link?.discordName || '' };
 }
 
-http = new HttpSide(cfg, { routes, drain, discordOn: () => discord.configured });
+// The bootstrap. One async function rather than top-level await, so the
+// same file can be bundled into CommonJS for the single executable.
+async function main() {
+  http = new HttpSide(cfg, { routes, drain, discordOn: () => discord.configured });
 
-// The admin web (design section 15). Loopback, its own port; Discord
-// sign-in when ADMIN_URL gives the page an outside address, and then
-// the rest of the sign-in must be there too, or the web stays down and
-// says which key -- the bridge itself goes on, as it does over a bad
-// exchange directory.
-let web = null;
-if (process.env.ADMIN_PORT !== undefined && process.env.ADMIN_PORT !== '' && !Number.isFinite(Number(process.env.ADMIN_PORT))) {
-  console.error('[admin] ADMIN_PORT is not a number: the admin web is off');
-} else if (process.env.ADMIN_PORT !== undefined && process.env.ADMIN_PORT !== '' && Number(process.env.ADMIN_PORT) < 0) {
-  console.error('[admin] ADMIN_PORT is not a port: the admin web is off');
-}
-if (cfg.adminPort > 0) {
-  let auth = null;
-  let webUp = true;
-  let hostOfUrl = '';
-  if (cfg.adminUrl) {
-    try {
-      hostOfUrl = new URL(cfg.adminUrl).host;
-    } catch {
-      webUp = false;
-      console.error('[admin] ADMIN_URL is not a URL: the admin web stays down');
+  // The admin web (design section 15). Loopback, its own port; Discord
+  // sign-in when ADMIN_URL gives the page an outside address, and then
+  // the rest of the sign-in must be there too, or the web stays down and
+  // says which key -- the bridge itself goes on, as it does over a bad
+  // exchange directory.
+  let web = null;
+  if (process.env.ADMIN_PORT !== undefined && process.env.ADMIN_PORT !== '' && !Number.isFinite(Number(process.env.ADMIN_PORT))) {
+    console.error('[admin] ADMIN_PORT is not a number: the admin web is off');
+  } else if (process.env.ADMIN_PORT !== undefined && process.env.ADMIN_PORT !== '' && Number(process.env.ADMIN_PORT) < 0) {
+    console.error('[admin] ADMIN_PORT is not a port: the admin web is off');
+  }
+  if (cfg.adminPort > 0) {
+    let auth = null;
+    let webUp = true;
+    let hostOfUrl = '';
+    if (cfg.adminUrl) {
+      try {
+        hostOfUrl = new URL(cfg.adminUrl).host;
+      } catch {
+        webUp = false;
+        console.error('[admin] ADMIN_URL is not a URL: the admin web stays down');
+      }
+    }
+    if (webUp && cfg.adminUrl) {
+      const missing = [
+        ['DISCORD_CLIENT_SECRET', cfg.oauthSecret],
+        ['DISCORD_CLIENT_ID', cfg.clientId],
+        ['DISCORD_GUILD_ID', cfg.guildId],
+        ['DISCORD_ADMIN_ROLE_ID', cfg.adminRoleIds.length ? 'set' : ''],
+      ].filter(([, v]) => !v).map(([k]) => k);
+      if (missing.length) {
+        webUp = false;
+        console.error(`[admin] ADMIN_URL is set but ${missing.join(', ')} is not: the admin web stays down`);
+      } else {
+        auth = storageAuth({ clientId: cfg.clientId, clientSecret: cfg.oauthSecret, guildId: cfg.guildId, roleIds: cfg.adminRoleIds, adminUrl: cfg.adminUrl });
+        webAuth = true;
+      }
+    }
+    if (webUp) {
+      try {
+        web = storageWeb({
+          ops: storageAdminOps,
+          dir: join(HOME, 'web'),
+          allowedHosts: hostOfUrl ? [hostOfUrl] : [],
+          auth,
+        });
+        await web.listen(cfg.adminPort);
+      } catch (e) {
+        web = null;
+        console.error(`[admin] the admin web could not listen on 127.0.0.1:${cfg.adminPort} (${e.code || e.message}): it stays down, the bridge goes on`);
+      }
     }
   }
-  if (webUp && cfg.adminUrl) {
-    const missing = [
-      ['DISCORD_CLIENT_SECRET', cfg.oauthSecret],
-      ['DISCORD_CLIENT_ID', cfg.clientId],
-      ['DISCORD_GUILD_ID', cfg.guildId],
-      ['DISCORD_ADMIN_ROLE_ID', cfg.adminRoleIds.length ? 'set' : ''],
-    ].filter(([, v]) => !v).map(([k]) => k);
-    if (missing.length) {
-      webUp = false;
-      console.error(`[admin] ADMIN_URL is set but ${missing.join(', ')} is not: the admin web stays down`);
-    } else {
-      auth = storageAuth({ clientId: cfg.clientId, clientSecret: cfg.oauthSecret, guildId: cfg.guildId, roleIds: cfg.adminRoleIds, adminUrl: cfg.adminUrl });
-      webAuth = true;
-    }
-  }
-  if (webUp) {
+
+  // A THROW IN A TIMER CALLBACK IS AN UNCAUGHT EXCEPTION, which for Node is
+  // fatal: an unguarded keep() would take the whole bridge down with it on
+  // whatever hour it first hit a bad row instead of just skipping that run.
+  const keep = () => {
     try {
-      web = storageWeb({
-        ops: storageAdminOps,
-        dir: join(dirname(fileURLToPath(import.meta.url)), '..', 'web'),
-        allowedHosts: hostOfUrl ? [hostOfUrl] : [],
-        auth,
-      });
-      await web.listen(cfg.adminPort);
+      runKeep(storage, cfg);
     } catch (e) {
-      web = null;
-      console.error(`[admin] the admin web could not listen on 127.0.0.1:${cfg.adminPort} (${e.code || e.message}): it stays down, the bridge goes on`);
+      console.warn(`[storage] keep failed: ${e.message}`);
+    }
+  };
+  keep();
+  setInterval(keep, 60 * 60 * 1000).unref();
+
+  // The bot command is a wipe started OUTSIDE the game, so the game has to be
+  // told: it freezes the character's record and seals his devices on the push.
+  discord.onWipe = async (uid) => {
+    const r = await wipePlayer(uid);
+    if (r.ok) queuePush(null, { Uid: uid }, 'wipe');
+    return r;
+  };
+
+  await discord.start();
+
+  if (discord.configured) {
+    // Manual edits in the guild are put back on the member update event; the
+    // sweep catches whatever the gateway did not deliver (R7.6).
+    setInterval(() => {
+      rolesMirror.reconcileAll(discord.guild, 'sweep').catch((e) => console.warn(`[roles] sweep failed: ${e.message}`));
+    }, 10 * 60 * 1000).unref();
+  }
+
+  // The store is the home for news too (owner, 2026-09-01). Passing it here
+  // is the whole wiring: News reads what it already owns at construction and
+  // writes through on every change.
+  news = new News(store);
+
+  // EVERY change to the feed rides, not only a new post. The game caches
+  // v1/news/list and v1/news/open for a minute and drops them when an envelope
+  // of this kind arrives, so an edited or deleted post used to survive in every
+  // PDA for the full TTL. Fresh tells a new post (worth a toast) from a change
+  // (worth forgetting the cache).
+  news.onNews = (p, fresh) => queuePush(null, {
+    Id: p.Id, Title: p.Title, Who: p.Who, At: p.At, Fresh: fresh,
+  }, 'news');
+
+  // THE FURNITURE IS BUILT BEST EFFORT, AND A MISSING PIECE IS NOT A DEAD BOT.
+  //
+  // None of this used to be caught. A bot without Manage Channels, a guild at
+  // its 500-channel cap or a Discord hiccup at the wrong second killed the
+  // process at start-up -- and the game was then left with no chat, no roster
+  // and no roles at all, over a channel the bridge can perfectly well run
+  // without: homeOf() falls back to the parent, a conversation with no thread
+  // lives in the store, and the news feed serves what it already holds.
+  async function furnish(what, make) {
+    try {
+      return await make();
+    } catch (e) {
+      console.warn(`[bridge] ${what} is not available (${e.message}); running without it`);
+      return null;
     }
   }
-}
 
-// A THROW IN A TIMER CALLBACK IS AN UNCAUGHT EXCEPTION, which for Node is
-// fatal: an unguarded keep() would take the whole bridge down with it on
-// whatever hour it first hit a bad row instead of just skipping that run.
-const keep = () => {
-  try {
-    runKeep(storage, cfg);
-  } catch (e) {
-    console.warn(`[storage] keep failed: ${e.message}`);
-  }
-};
-keep();
-setInterval(keep, 60 * 60 * 1000).unref();
-
-// The bot command is a wipe started OUTSIDE the game, so the game has to be
-// told: it freezes the character's record and seals his devices on the push.
-discord.onWipe = async (uid) => {
-  const r = await wipePlayer(uid);
-  if (r.ok) queuePush(null, { Uid: uid }, 'wipe');
-  return r;
-};
-
-await discord.start();
-
-if (discord.configured) {
-  // Manual edits in the guild are put back on the member update event; the
-  // sweep catches whatever the gateway did not deliver (R7.6).
-  setInterval(() => {
-    rolesMirror.reconcileAll(discord.guild, 'sweep').catch((e) => console.warn(`[roles] sweep failed: ${e.message}`));
-  }, 10 * 60 * 1000).unref();
-}
-
-// The store is the home for news too (owner, 2026-09-01). Passing it here
-// is the whole wiring: News reads what it already owns at construction and
-// writes through on every change.
-const news = new News(store);
-
-// EVERY change to the feed rides, not only a new post. The game caches
-// v1/news/list and v1/news/open for a minute and drops them when an envelope
-// of this kind arrives, so an edited or deleted post used to survive in every
-// PDA for the full TTL. Fresh tells a new post (worth a toast) from a change
-// (worth forgetting the cache).
-news.onNews = (p, fresh) => queuePush(null, {
-  Id: p.Id, Title: p.Title, Who: p.Who, At: p.At, Fresh: fresh,
-}, 'news');
-
-// THE FURNITURE IS BUILT BEST EFFORT, AND A MISSING PIECE IS NOT A DEAD BOT.
-//
-// None of this used to be caught. A bot without Manage Channels, a guild at
-// its 500-channel cap or a Discord hiccup at the wrong second killed the
-// process at start-up -- and the game was then left with no chat, no roster
-// and no roles at all, over a channel the bridge can perfectly well run
-// without: homeOf() falls back to the parent, a conversation with no thread
-// lives in the store, and the news feed serves what it already holds.
-async function furnish(what, make) {
-  try {
-    return await make();
-  } catch (e) {
-    console.warn(`[bridge] ${what} is not available (${e.message}); running without it`);
-    return null;
-  }
-}
-
-// THE TOWN SQUARE EXISTS WITHOUT A GUILD (TZ-2 R2.6). Its row used to be
-// written only when Discord handed back a channel for it, so a bridge with
-// no bot had no zone conversation at all and every PDA opened an empty chat
-// list. The conversation is ours; the channel is a surface it may also have.
-if (!store.convo('zone')) {
-  store.putConvo('zone', {
-    threadId: '',
-    kind: 'zone',
-    title: 'Зона',
-    members: ['*'],
-    createdAt: new Date().toISOString(),
-  });
-}
-
-// Everything below builds or adopts furniture IN THE GUILD, and there is no
-// guild to build in without a bot. Skipped rather than attempted and caught:
-// four warnings about a Discord that was never configured read as four
-// faults (R2.6).
-if (discord.configured) {
-
-// Typed homes for threads: direct talks and groups each get their own
-// channel; the ids live in the bridge state so a rename survives.
-{
-  const d = await furnish('the direct-conversation channel', () => discord.ensureTypedChannel(
-    'пда-розмови',
-    'Особисті розмови з КПК. Пишіть у своїх тредах — сам канал порожній.',
-    store.guildRef('directChannelId'),
-  ));
-  discord.directChannel = d;
-  if (d) store.setGuildRef('directChannelId', d.id);
-
-  const g = await furnish('the group-conversation channel', () => discord.ensureTypedChannel(
-    'пда-групи',
-    'Групові розмови з КПК. Пишіть у своїх тредах — сам канал порожній.',
-    store.guildRef('groupChannelId'),
-  ));
-  discord.groupChannel = g;
-  if (g) store.setGuildRef('groupChannelId', g.id);
-}
-
-// The zone exists from the first boot: one conversation for everyone,
-// members ['*'] -- the wildcard Store.memberOf understands.
-{
-  const known = store.convo('zone');
-  const ch = await furnish('the zone channel', () => discord.ensureZoneChannel(known?.threadId));
-  if (ch && (!known || known.threadId !== ch.id)) {
-    // The first cut of the zone was a public thread; a stray one is
-    // deleted rather than left as a second town square. Only a THREAD is
-    // ever deleted here (see deleteThread): ensureZoneChannel refuses to
-    // answer at all when it cannot tell "deleted" from "Discord is down",
-    // and the town square with its whole history is not something to lose
-    // over a hiccup.
-    if (known?.threadId) {
-      await discord.deleteThread(known.threadId, 'the zone moved to its own channel').catch(() => {});
-    }
+  // THE TOWN SQUARE EXISTS WITHOUT A GUILD (TZ-2 R2.6). Its row used to be
+  // written only when Discord handed back a channel for it, so a bridge with
+  // no bot had no zone conversation at all and every PDA opened an empty chat
+  // list. The conversation is ours; the channel is a surface it may also have.
+  if (!store.convo('zone')) {
     store.putConvo('zone', {
-      threadId: ch.id, // the channel id rides in the thread field: convoByThread keeps working
+      threadId: '',
       kind: 'zone',
       title: 'Зона',
       members: ['*'],
-      createdAt: known?.createdAt || new Date().toISOString(),
+      createdAt: new Date().toISOString(),
     });
   }
+
+  // Everything below builds or adopts furniture IN THE GUILD, and there is no
+  // guild to build in without a bot. Skipped rather than attempted and caught:
+  // four warnings about a Discord that was never configured read as four
+  // faults (R2.6).
+  if (discord.configured) {
+
+  // Typed homes for threads: direct talks and groups each get their own
+  // channel; the ids live in the bridge state so a rename survives.
+  {
+    const d = await furnish('the direct-conversation channel', () => discord.ensureTypedChannel(
+      'пда-розмови',
+      'Особисті розмови з КПК. Пишіть у своїх тредах — сам канал порожній.',
+      store.guildRef('directChannelId'),
+    ));
+    discord.directChannel = d;
+    if (d) store.setGuildRef('directChannelId', d.id);
+
+    const g = await furnish('the group-conversation channel', () => discord.ensureTypedChannel(
+      'пда-групи',
+      'Групові розмови з КПК. Пишіть у своїх тредах — сам канал порожній.',
+      store.guildRef('groupChannelId'),
+    ));
+    discord.groupChannel = g;
+    if (g) store.setGuildRef('groupChannelId', g.id);
+  }
+
+  // The zone exists from the first boot: one conversation for everyone,
+  // members ['*'] -- the wildcard Store.memberOf understands.
+  {
+    const known = store.convo('zone');
+    const ch = await furnish('the zone channel', () => discord.ensureZoneChannel(known?.threadId));
+    if (ch && (!known || known.threadId !== ch.id)) {
+      // The first cut of the zone was a public thread; a stray one is
+      // deleted rather than left as a second town square. Only a THREAD is
+      // ever deleted here (see deleteThread): ensureZoneChannel refuses to
+      // answer at all when it cannot tell "deleted" from "Discord is down",
+      // and the town square with its whole history is not something to lose
+      // over a hiccup.
+      if (known?.threadId) {
+        await discord.deleteThread(known.threadId, 'the zone moved to its own channel').catch(() => {});
+      }
+      store.putConvo('zone', {
+        threadId: ch.id, // the channel id rides in the thread field: convoByThread keeps working
+        kind: 'zone',
+        title: 'Зона',
+        members: ['*'],
+        createdAt: known?.createdAt || new Date().toISOString(),
+      });
+    }
+  }
+
+  discord.useNews(news);
+  {
+    const ch = await furnish('the news forum', () => news.start(discord, store.guildRef('newsChannelId')));
+    if (ch) store.setGuildRef('newsChannelId', ch.id);
+  }
+
+  } // end: furniture in the guild
+
+  await http.listen();
+  console.log('[bridge] ready');
 }
 
-discord.useNews(news);
-{
-  const ch = await furnish('the news forum', () => news.start(discord, store.guildRef('newsChannelId')));
-  if (ch) store.setGuildRef('newsChannelId', ch.id);
-}
-
-} // end: furniture in the guild
-
-await http.listen();
-console.log('[bridge] ready');
+main().catch((e) => {
+  console.error(`[bridge] failed to start: ${e.stack || e.message}`);
+  process.exit(1);
+});
