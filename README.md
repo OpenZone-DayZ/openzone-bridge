@@ -107,6 +107,17 @@ its boxes as unavailable.
 | `STORAGE_KEEP_VERSIONS_DAYS` | 14 | versions older than this go, except each box's current one |
 | `STORAGE_KEEP_EVENTS_DAYS` | 90 | events older than this go |
 
+### From the console
+
+`node scripts/storage.mjs <command>` talks to the running bridge with the shared
+secret from `.env` (never printed). Reads: `boxes`, `box <id>`, `history <id>`,
+`player <steam64>`, `find <class>`, `parked`, `version <n>`. Changes to a closed box,
+taking effect at its next open: `rollback <id> <version>`, `unpark <parkedId>`,
+`discard <parkedId>`, `give <id> <class> [qty]`, `empty <id>`. Live, answered by the
+engine within a few seconds: `close <id>`, `remove <id>` (a closed box only),
+`report <id>`; `result <ref>` reads the answer later. Every change is an event with
+the admin's name.
+
 ## State
 
 Everything the bridge remembers -- account links, conversation keys, the chat
