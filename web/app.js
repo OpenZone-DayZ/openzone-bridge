@@ -317,6 +317,7 @@
     const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function live(op, confirmKey, after) {
       if (confirmKey && !(await ask(confirmKey, { id }))) return;
+      const here = location.hash;
       const sent = await act(op, { id });
       if (!sent) return;
       const waiting = msg(s('live_sent'));
@@ -333,7 +334,9 @@
         return;
       }
       const note = String(answer.note || '').replace(/^[0-9a-f]{12}: /, '');
-      if (after) await after(note);
+      // The admin may have left this box meanwhile: the answer is still
+      // shown, but nothing is re-rendered or redirected under them.
+      if (after && location.hash === here) await after(note);
       notice(`${s('live_answer')} ${note}`, !/^ok\b/.test(note));
     }
 
@@ -350,7 +353,16 @@
     actions.append(h('div', { class: 'row' },
       h('button', { type: 'button', onclick: () => live('report') }, s('live_report')),
       box.status === 'open' ? h('button', { type: 'button', class: 'danger', onclick: () => live('close', 'c_close', async () => { await pause(1500); await again(); }) }, s('live_close')) : null,
-      closed ? h('button', { type: 'button', class: 'danger', onclick: () => live('remove', 'c_remove', async (note) => { if (/^ok\b/.test(note)) location.hash = '#/boxes'; }) }, s('live_remove')) : null));
+      closed ? h('button', { type: 'button', class: 'danger', onclick: () => live('remove', 'c_remove', async (note) => {
+        if (!/^ok\b/.test(note)) return;
+        location.hash = '#/boxes';
+        // The list shows "Loading…" until its fetch answers; the notice
+        // waits for that, two seconds at most.
+        for (let i = 0; i < 20; i++) {
+          await pause(100);
+          if (!document.querySelector('main .msg')) break;
+        }
+      }) }, s('live_remove')) : null));
 
     show(title,
       h('div', { class: 'panel stat' },
