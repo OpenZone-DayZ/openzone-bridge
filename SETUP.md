@@ -113,6 +113,9 @@ openssl rand -hex 32
 
 - `.env` → `OZ_SHARED_SECRET`
 - the game server's `$profile:OpenZone\OZ_Core_Settings.json` → `Bridge.Secret`
+- `.env` → `STORAGE_XCHG_DIR` — only on a host that also runs the DayZ server with
+  `OpenZone_Storage`: the server profile's `OpenZone/Storage/xchg` directory.
+  `STORAGE_KEEP_VERSIONS_DAYS` (14) and `STORAGE_KEEP_EVENTS_DAYS` (90) bound the history.
 
 `DISCORD_PARENT_CHANNEL_ID` is **required** — the bridge refuses to start without
 it. Every private conversation is a thread, and a thread needs a channel to hang

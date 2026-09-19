@@ -89,6 +89,24 @@ reads the shared secret from `.env` (it never prints it), and it polls
 under a ServerId of its own so the guild sees nothing and drops the rows it
 wrote when it finishes. Run it on purpose with `npm run test:live`.
 
+## Storage boxes
+
+The bridge is the home of every closed storage box of `OpenZone_Storage`
+(design: `docs/specs/2026-09-19-storage-sql-truth-design.md` in the series
+hub). The game writes a box's contents as one file into
+`$profile:OpenZone/Storage/xchg/` when it closes and posts
+`/v1/storage/close`; the bridge keeps the roots byte for byte in SQLite,
+promotes the file into the box's cache, and answers `/v1/storage/open`
+with that cache, rebuilding it only after an admin changed the version.
+Without `STORAGE_XCHG_DIR` every storage route refuses and the game shows
+its boxes as unavailable.
+
+| `.env` key | Default | Meaning |
+|---|---|---|
+| `STORAGE_XCHG_DIR` | unset | the game server's `profiles/OpenZone/Storage/xchg` directory, on this machine |
+| `STORAGE_KEEP_VERSIONS_DAYS` | 14 | versions older than this go, except each box's current one |
+| `STORAGE_KEEP_EVENTS_DAYS` | 90 | events older than this go |
+
 ## State
 
 Everything the bridge remembers -- account links, conversation keys, the chat

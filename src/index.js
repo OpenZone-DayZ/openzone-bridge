@@ -15,6 +15,10 @@
 import 'dotenv/config';
 import { byteClip, stamp } from './clip.js';
 import { Store, snowflake } from './store.js';
+import { StorageStore } from './storage-store.js';
+import { Xchg } from './storage-xchg.js';
+import { storageRoutes } from './storage-routes.js';
+import { runKeep } from './storage-keep.js';
 import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './history.js';
 import { fillMirror } from './mirror.js';
 import { DiscordSide } from './discord.js';
@@ -80,9 +84,23 @@ const cfg = {
   // Optional: a Discord role that counts as bridge admin alongside the
   // Administrator permission (personas, /openzone).
   adminRoleId: process.env.DISCORD_ADMIN_ROLE_ID || '',
+  // Storage boxes (design 2026-09-19). The exchange directory is the game
+  // server's $profile:OpenZone/Storage/xchg; unset, the storage routes
+  // refuse and boxes stay unavailable in the game.
+  storageXchgDir: process.env.STORAGE_XCHG_DIR || '',
+  storageKeepVersionsDays: Number(process.env.STORAGE_KEEP_VERSIONS_DAYS || 14),
+  storageKeepEventsDays: Number(process.env.STORAGE_KEEP_EVENTS_DAYS || 90),
 };
 
 const store = new Store(cfg.dbPath);
+const storage = new StorageStore(store);
+const xchg = cfg.storageXchgDir ? new Xchg(cfg.storageXchgDir) : null;
+if (xchg) {
+  const swept = xchg.sweep(storage.knownIds());
+  console.log(`[storage] exchange directory ready${swept.length ? `, swept ${swept.length} file(s)` : ''}`);
+} else {
+  console.log('[storage] STORAGE_XCHG_DIR is not set: storage routes refuse, boxes stay unavailable in the game');
+}
 
 // OUR OWN ID FOR A RECORD, and it is deliberately not Discord's (TZ-2 R6.4).
 //
@@ -378,6 +396,8 @@ async function pairFreeze(a, b, frozen) {
 }
 
 const routes = {
+  ...storageRoutes({ store: storage, xchg }),
+
   // --- chat ---
 
   '/v1/chat/list': async ({ Json }) => {
@@ -1636,6 +1656,9 @@ function rolesFor(uid) {
 }
 
 http = new HttpSide(cfg, { routes, drain, discordOn: () => discord.configured });
+
+runKeep(storage, cfg);
+setInterval(() => runKeep(storage, cfg), 60 * 60 * 1000).unref();
 
 // The bot command is a wipe started OUTSIDE the game, so the game has to be
 // told: it freezes the character's record and seals his devices on the push.
