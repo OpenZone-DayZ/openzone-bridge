@@ -18,6 +18,7 @@ import { Store, snowflake } from './store.js';
 import { StorageStore } from './storage-store.js';
 import { Xchg } from './storage-xchg.js';
 import { storageRoutes } from './storage-routes.js';
+import { storageAdmin } from './storage-admin.js';
 import { runKeep } from './storage-keep.js';
 import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './history.js';
 import { fillMirror } from './mirror.js';
@@ -120,6 +121,14 @@ if (cfg.storageXchgDir) {
 } else {
   console.log('[storage] STORAGE_XCHG_DIR is not set: storage routes refuse, boxes stay unavailable in the game');
 }
+
+// A live command for the game's storage sink: queued for every server's
+// next poll and the held poll woken at once.
+const storagePush = (obj) => {
+  queuePush(null, obj, 'storage');
+  http?.wake();
+};
+const storageAdminOps = storageAdmin({ store: storage, xchg, push: storagePush });
 
 // OUR OWN ID FOR A RECORD, and it is deliberately not Discord's (TZ-2 R6.4).
 //
@@ -415,7 +424,7 @@ async function pairFreeze(a, b, frozen) {
 }
 
 const routes = {
-  ...storageRoutes({ store: storage, xchg }),
+  ...storageRoutes({ store: storage, xchg, admin: storageAdminOps }),
 
   // --- chat ---
 

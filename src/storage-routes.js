@@ -8,7 +8,7 @@ import { buildFile, parseChunk, parseFile, stampNow, WireError } from './storage
 
 const list = (v) => (Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : []);
 
-export function storageRoutes({ store, xchg }) {
+export function storageRoutes({ store, xchg, admin }) {
   const off = { ok: false, why: 'storage not configured' };
   const bad = (why) => ({ ok: false, why });
   const boxId = (j) => (Xchg.isBoxId(j?.id) ? String(j.id) : '');
@@ -116,7 +116,12 @@ export function storageRoutes({ store, xchg }) {
       // COMPUTED THE SAME WAY THE FILE ITSELF WOULD ANSWER, not read back off
       // the version row: the two must never be able to disagree about what
       // the game is about to parse.
-      const entities = cur.chunks.reduce((n, c) => n + parseChunk(c).nodes.length, 0);
+      let entities = 0;
+      try {
+        for (const c of cur.chunks) entities += parseChunk(c).nodes.length;
+      } catch (e) {
+        return bad(`a stored root cannot be parsed: ${e.message}`);
+      }
       return { ok: true, file: xchg.cacheName(id), stamp: cur.stamp, roots: cur.chunks.length, entities };
     },
 
@@ -152,6 +157,17 @@ export function storageRoutes({ store, xchg }) {
       const events = Array.isArray(Json?.events) ? Json.events.slice(0, 500) : [];
       const stored = store.events(events, String(ServerId || ''));
       return { ok: true, stored };
+    },
+
+    // The admin side: the console today, the web tomorrow (design sections
+    // 4.5 and 8). One op per call, named in Json.op; `admin` names who.
+    '/v1/storage/admin': async ({ Json }) => {
+      if (!xchg) return off;
+      if (!admin) return bad('no admin side');
+      const op = String(Json?.op || '');
+      const fn = Object.prototype.hasOwnProperty.call(admin, op) ? admin[op] : null;
+      if (typeof fn !== 'function') return bad(`unknown op: ${op}`);
+      return fn({ ...Json, admin: String(Json?.admin || 'cli') });
     },
   };
 }

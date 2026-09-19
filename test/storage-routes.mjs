@@ -163,6 +163,39 @@ try {
   ok('a box SQL has never seen opens as empty', await call('/v1/storage/open', { id: '9-9-9-9' }), { ok: true, empty: true });
   ok('an empty close needs no file', await call('/v1/storage/close', { id: '1-2-3-4', stamp: '2026-09-19 05:31:00', file: '', roots: 0, entities: 0, why: 'boot' }), { ok: true, version: 5 });
   ok('an empty box opens as empty', await call('/v1/storage/open', { id: '1-2-3-4' }), { ok: true, empty: true });
+
+  // The admin route: reads, a version change that drops the cache, a live
+  // command that shows up in the game's poll.
+  const boxes = await call('/v1/storage/admin', { op: 'boxes' });
+  ok('admin boxes', [boxes.ok, boxes.boxes.map((b) => b.box_id).includes(BOX)], [true, true]);
+  ok('admin unknown op', await call('/v1/storage/admin', { op: 'nope' }), { ok: false, why: 'unknown op: nope' });
+  await call('/v1/storage/open', { id: BOX, by: '' });
+  ok('the cache exists before the rollback', existsSync(join(xdir, `${BOX}.bin`)), true);
+  const rb = await call('/v1/storage/admin', { op: 'rollback', id: BOX, version: 1, admin: 'owner' });
+  ok('admin rollback', rb.ok, true);
+  ok('and the cache is gone', existsSync(join(xdir, `${BOX}.bin`)), false);
+  const back = await call('/v1/storage/open', { id: BOX, by: '' });
+  ok('the next open rebuilds it with the rolled-back roots', [back.ok, back.roots], [true, 3]);
+  const gift = await call('/v1/storage/admin', { op: 'give', id: BOX, type: 'Rag', qty: 2, admin: 'owner' });
+  ok('admin give', gift.ok, true);
+  const withGift = await call('/v1/storage/open', { id: BOX, by: '' });
+  ok('the next open has the gift', [withGift.ok, withGift.roots], [true, 4]);
+  // A server's first poll starts at the current push cursor, so the game
+  // must have polled once before a command is queued for it.
+  const pollOnce = (fresh) => fetch(`${BASE}/v1/poll`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ Secret: SECRET, ServerId: 'storage-test', Cursor: 0, Fresh: fresh, Uids: [], Mirrors: [] }),
+  }).then((r) => r.json());
+  await pollOnce(true);
+  const liveClose = await call('/v1/storage/admin', { op: 'close', id: BOX, admin: 'owner' });
+  ok('admin close answers a ref', [liveClose.ok, typeof liveClose.ref], [true, 'string']);
+  const polled = await pollOnce(false);
+  const storageItems = (polled.Items || []).filter((i) => i.Kind === 'storage').map((i) => JSON.parse(i.Json));
+  ok('the poll carries the command to the game', storageItems.map((i) => [i.cmd, i.id, i.by, i.ref === liveClose.ref]), [['close', BOX, 'owner', true]]);
+  ok('the result is not there until the engine answers', await call('/v1/storage/admin', { op: 'result', ref: liveClose.ref }), { ok: true, result: null });
+  await call('/v1/storage/events', { events: [{ at: '2026-09-19 05:40:00', kind: 'admin_result', box: BOX, note: `${liveClose.ref}: ok closing` }] });
+  ok('and is there once it has', (await call('/v1/storage/admin', { op: 'result', ref: liveClose.ref })).result.note, `${liveClose.ref}: ok closing`);
 } catch (e) {
   fail++;
   console.log(`  FAIL ${e.message}`);
