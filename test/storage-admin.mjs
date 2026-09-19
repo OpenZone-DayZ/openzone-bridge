@@ -111,7 +111,7 @@ ok('empty', admin.empty({ id: BOX, admin: 'owner' }).ok, true);
 ok('version lists the roots of any version', admin.version({ version: target + 1 }).roots.length > 0, true);
 
 const live = admin.close({ id: BOX, admin: 'owner' });
-ok('a live command is pushed with a ref', [live.ok, live.ref.length, pushed.length, pushed[0].cmd, pushed[0].id, pushed[0].by, pushed[0].ref === live.ref], [true, 12, 1, 'close', BOX, 'owner', true]);
+ok('a live command is pushed with a ref', [live.ok, live.ref.length, pushed.length, pushed[0].cmd, pushed[0].id, pushed[0].by, pushed[0].token === live.ref], [true, 12, 1, 'close', BOX, 'owner', true]);
 ok('a live command is an event', s.eventsOf(BOX)[0].kind, 'admin_close');
 ok('report and remove push too', [admin.report({ id: BOX, admin: 'owner' }).ok, admin.remove({ id: BOX, admin: 'owner' }).ok, pushed.length], [true, true, 3]);
 ok('a live command on an unknown box is refused', admin.close({ id: '9-9-9-9', admin: 'owner' }), { ok: false, why: 'unknown box' });

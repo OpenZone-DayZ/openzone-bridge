@@ -26,7 +26,7 @@ export function storageAdmin({ store, xchg, push }) {
     if (!known(id)) return bad('unknown box');
     if (!push) return bad('no live channel');
     const ref = randomBytes(6).toString('hex');
-    push({ cmd, id: String(id), by: String(admin || 'admin'), ref });
+    push({ cmd, id: String(id), by: String(admin || 'admin'), token: ref });
     record(`admin_${cmd}`, String(id), admin, `ref ${ref}`);
     return { ok: true, ref };
   }

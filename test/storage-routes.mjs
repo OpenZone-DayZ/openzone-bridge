@@ -192,7 +192,7 @@ try {
   ok('admin close answers a ref', [liveClose.ok, typeof liveClose.ref], [true, 'string']);
   const polled = await pollOnce(false);
   const storageItems = (polled.Items || []).filter((i) => i.Kind === 'storage').map((i) => JSON.parse(i.Json));
-  ok('the poll carries the command to the game', storageItems.map((i) => [i.cmd, i.id, i.by, i.ref === liveClose.ref]), [['close', BOX, 'owner', true]]);
+  ok('the poll carries the command to the game', storageItems.map((i) => [i.cmd, i.id, i.by, i.token === liveClose.ref]), [['close', BOX, 'owner', true]]);
   ok('the result is not there until the engine answers', await call('/v1/storage/admin', { op: 'result', ref: liveClose.ref }), { ok: true, result: null });
   await call('/v1/storage/events', { events: [{ at: '2026-09-19 05:40:00', kind: 'admin_result', box: BOX, note: `${liveClose.ref}: ok closing` }] });
   ok('and is there once it has', (await call('/v1/storage/admin', { op: 'result', ref: liveClose.ref })).result.note, `${liveClose.ref}: ok closing`);
