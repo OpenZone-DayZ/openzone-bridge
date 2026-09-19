@@ -1,7 +1,7 @@
 // The admin web (design 2026-09-19, sections 8 and 15): its own listener,
 // static files without a build step, and a JSON api that is the very same
-// operations the console uses. Loopback always; with Discord sign-in only
-// when the bridge was given a client secret. Without sign-in nothing but
+// operations the console uses. Loopback always; with Discord sign-in when
+// ADMIN_URL gives the page an outside address. Without sign-in nothing but
 // the loopback stands between a browser on this machine and the boxes,
 // which is why the three guards below are not optional even then:
 //
@@ -28,11 +28,23 @@ const FILES = {
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
 };
 
+// The page has no inline script, no inline style and no outside
+// resource, so the strictest policy costs nothing -- and framing is the
+// one attack the three request guards do not see: the clicks come from
+// the page itself. So the page may not be framed, nor sniffed, nor
+// re-based.
+const HEADERS = {
+  'x-frame-options': 'DENY',
+  'x-content-type-options': 'nosniff',
+  'content-security-policy': "default-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+  'referrer-policy': 'no-referrer',
+};
+
 export function storageWeb({ ops, dir, allowedHosts = [], auth = null }) {
   const hosts = new Set(allowedHosts.map((h) => String(h).toLowerCase()));
   const server = createServer((req, res) => {
     route(req, res).catch((e) => {
-      console.error(`[admin] ${req.url}: ${e.stack || e.message}`);
+      console.error(`[admin] ${req.url.split('?')[0]}: ${e.stack || e.message}`);
       if (!res.headersSent) json(res, 500, { ok: false, why: 'the bridge failed' });
       else res.end();
     });
@@ -41,6 +53,7 @@ export function storageWeb({ ops, dir, allowedHosts = [], auth = null }) {
   function json(res, code, obj, headers = {}) {
     const s = JSON.stringify(obj);
     res.writeHead(code, {
+      ...HEADERS,
       'content-type': 'application/json; charset=utf-8',
       'content-length': Buffer.byteLength(s),
       'cache-control': 'no-store',
@@ -50,26 +63,33 @@ export function storageWeb({ ops, dir, allowedHosts = [], auth = null }) {
   }
 
   function redirect(res, to, headers = {}) {
-    res.writeHead(302, { location: to, 'cache-control': 'no-store', ...headers });
+    res.writeHead(302, { ...HEADERS, location: to, 'cache-control': 'no-store', ...headers });
     res.end();
   }
 
   function text(res, code, s) {
-    res.writeHead(code, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+    res.writeHead(code, { ...HEADERS, 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
     res.end(s);
   }
 
   async function readJson(req) {
     let size = 0;
+    let tooLarge = false;
     const chunks = [];
     for await (const c of req) {
       size += c.length;
       if (size > MAX_BODY) {
-        req.destroy();
-        throw new Error('body too large');
+        // Past the cap the body is refused either way, so there is nothing
+        // left to keep it in memory for -- but the socket is the caller's,
+        // not ours to sever: destroying it here raced the 400 answer below
+        // against the client seeing a reset connection instead. Draining
+        // the rest of the stream costs nothing next to a body this size.
+        tooLarge = true;
+        continue;
       }
       chunks.push(c);
     }
+    if (tooLarge) throw new Error('body too large');
     const raw = Buffer.concat(chunks).toString('utf8');
     let body;
     try {
@@ -91,6 +111,14 @@ export function storageWeb({ ops, dir, allowedHosts = [], auth = null }) {
     const host = String(req.headers.host || '').toLowerCase();
     if (!hosts.has(host)) return json(res, 421, { ok: false, why: 'wrong host' });
 
+    // A reverse proxy in front of a page that has no sign-in would hand
+    // every box to the internet with every guard satisfied (the proxy's
+    // origin IS the page's origin, and it rewrites Host to ours). A proxy
+    // announces itself in these headers; without sign-in that is refused.
+    if (!auth && (req.headers['x-forwarded-for'] || req.headers['x-forwarded-host'] || req.headers['x-forwarded-proto'] || req.headers.forwarded)) {
+      return json(res, 421, { ok: false, why: 'behind a proxy without sign-in: set ADMIN_URL and the Discord sign-in, or reach the page on this machine' });
+    }
+
     const path = req.url.split('?')[0];
     const session = auth ? auth.sessionOf(req.headers.cookie) : null;
 
@@ -100,7 +128,7 @@ export function storageWeb({ ops, dir, allowedHosts = [], auth = null }) {
       const file = FILES[path];
       if (!file) return json(res, 404, { ok: false, why: 'no such page' });
       const bytes = readFileSync(join(dir, file[0]));
-      res.writeHead(200, { 'content-type': file[1], 'content-length': bytes.length, 'cache-control': 'no-cache' });
+      res.writeHead(200, { ...HEADERS, 'content-type': file[1], 'content-length': bytes.length, 'cache-control': 'no-cache' });
       res.end(req.method === 'HEAD' ? undefined : bytes);
       return;
     }
@@ -116,6 +144,7 @@ export function storageWeb({ ops, dir, allowedHosts = [], auth = null }) {
     }
 
     const op = path.slice(API.length);
+    if (!/^[a-z]{1,32}$/.test(op)) return json(res, 404, { ok: false, why: 'unknown op' });
     if (op === 'whoami') {
       return json(res, 200, { ok: true, auth: !!auth, name: session ? session.name : '', userId: session ? session.userId : '' });
     }

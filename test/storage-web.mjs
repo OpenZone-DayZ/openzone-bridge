@@ -60,12 +60,14 @@ ok('the page is served', [home.status, home.headers['content-type'], home.body],
 ok('the page is served under its name too', (await raw(port, 'GET', '/index.html')).status, 200);
 ok('the scripts and the stylesheet are served with their types', (await Promise.all([raw(port, 'GET', '/app.js'), raw(port, 'GET', '/strings.js'), raw(port, 'GET', '/app.css')])).map((r) => [r.status, r.headers['content-type']]), [[200, 'text/javascript; charset=utf-8'], [200, 'text/javascript; charset=utf-8'], [200, 'text/css; charset=utf-8']]);
 ok('the page is never cached stale', home.headers['cache-control'], 'no-cache');
+ok('the page cannot be framed, sniffed or re-based', [home.headers['x-frame-options'], home.headers['content-security-policy'], home.headers['x-content-type-options']], ['DENY', "default-src 'self'; frame-ancestors 'none'; base-uri 'none'", 'nosniff']);
 ok('nothing else is served', [(await raw(port, 'GET', '/package.json')).status, (await raw(port, 'GET', '/../package.json')).status, (await raw(port, 'GET', '/web/app.js')).status], [404, 404, 404]);
 ok('a query string does not change the file', (await raw(port, 'GET', '/app.css?v=1')).status, 200);
 
 console.log('web: the api without sign-in');
 const r1 = await api(port, 'boxes', { id: 'x' });
 ok('an op answers what the op answers, as json, uncached', [r1.status, parse(r1), r1.headers['cache-control']], [200, { ok: true, boxes: [] }, 'no-store']);
+ok('an api answer is not sniffed either', r1.headers['x-content-type-options'], 'nosniff');
 ok('the op saw the body and the admin the page named itself', seen.at(-1), { id: 'x', admin: 'web' });
 await api(port, 'boxes', { admin: 'Owner' });
 ok('a name given is used', seen.at(-1).admin, 'Owner');
@@ -76,11 +78,16 @@ ok('an empty name is web', seen.at(-1).admin, 'web');
 ok('an async op is awaited', parse(await api(port, 'slow')), { ok: true, waited: true });
 ok('an unknown op is a 404 in words', [(await api(port, 'nope')).status, parse(await api(port, 'nope')).why], [404, 'unknown op: nope']);
 ok('an op off the prototype is unknown too', (await api(port, 'toString')).status, 404);
+const dotted = await raw(port, 'POST', '/admin/v1/../x', { 'content-type': 'application/json', 'x-oz-admin': '1' }, '{}');
+ok('a malformed op is refused before its name is reflected', [dotted.status, parse(dotted).why], [404, 'unknown op']);
 ok('an op that throws is refused in words', parse(await api(port, 'boom')), { ok: false, why: 'boom failed: kaboom' });
 ok('whoami without sign-in says so', parse(await api(port, 'whoami')), { ok: true, auth: false, name: '', userId: '' });
 ok('a body that is not json is a 400', (await raw(port, 'POST', '/admin/v1/boxes', { 'content-type': 'application/json', 'x-oz-admin': '1' }, '{oops')).status, 400);
 ok('a body that is not an object is a 400', (await raw(port, 'POST', '/admin/v1/boxes', { 'content-type': 'application/json', 'x-oz-admin': '1' }, '[1]')).status, 400);
 ok('an empty body is an empty object', parse(await raw(port, 'POST', '/admin/v1/boxes', { 'content-type': 'application/json', 'x-oz-admin': '1' }, '')).ok, true);
+const bigBody = '{"a":"' + 'x'.repeat(1 << 20) + '"}';
+const overflow = await raw(port, 'POST', '/admin/v1/boxes', { 'content-type': 'application/json', 'x-oz-admin': '1' }, bigBody);
+ok('a body past the cap is refused, and the listener still answers after', [overflow.status, parse(overflow).why, (await api(port, 'boxes')).status], [400, 'body too large', 200]);
 ok('a GET on the api is no page', (await raw(port, 'GET', '/admin/v1/boxes')).status, 404);
 ok('a POST off the api is post only', (await raw(port, 'POST', '/app.js', { 'content-type': 'application/json', 'x-oz-admin': '1' }, '{}')).status, 405);
 
@@ -96,6 +103,7 @@ ok('the loopback names with the port pass', [(await raw(port, 'GET', '/', { host
 ok('the loopback name without the port does not', (await raw(port, 'GET', '/', { host: '127.0.0.1' })).status, 421);
 ok('the host of the admin url passes, whatever its case', [(await raw(port, 'GET', '/', { host: 'admin.example' })).status, (await raw(port, 'GET', '/', { host: 'Admin.Example' })).status], [200, 200]);
 ok('a sign-in route without sign-in is no page', (await raw(port, 'GET', '/auth/login')).status, 404);
+ok('a forwarded request is refused while sign-in is off', [(await raw(port, 'GET', '/', { 'x-forwarded-for': '1.2.3.4' })).status, (await raw(port, 'GET', '/', { 'x-forwarded-host': 'evil.example' })).status, (await raw(port, 'GET', '/', { 'x-forwarded-proto': 'https' })).status, (await raw(port, 'GET', '/', { forwarded: 'for=1.2.3.4' })).status], [421, 421, 421, 421]);
 await web.close();
 
 console.log('web: with sign-in');
@@ -114,6 +122,7 @@ const web2 = storageWeb({ ops, dir, allowedHosts: [], auth: fakeAuth });
 const port2 = await web2.listen(0);
 const cookie = { cookie: `oz_admin=${good.id}` };
 ok('the page itself is served to a stranger', (await raw(port2, 'GET', '/')).status, 200);
+ok('a forwarded request passes once sign-in is on', (await raw(port2, 'GET', '/', { 'x-forwarded-for': '1.2.3.4' })).status, 200);
 ok('whoami tells the page sign-in is on and nobody is in', parse(await api(port2, 'whoami')), { ok: true, auth: true, name: '', userId: '' });
 ok('an op without a session is a 401 in words', [(await api(port2, 'boxes')).status, parse(await api(port2, 'boxes')).why], [401, 'sign in first']);
 const login = await raw(port2, 'GET', '/auth/login');

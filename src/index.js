@@ -155,9 +155,15 @@ const dbBytes = (path) => {
   }
   return n;
 };
+// Whether sign-in actually turned on, not just whether ADMIN_URL was set --
+// the admin block further down can still leave it off (a bad URL, a
+// missing secret) and never flips this. Declared here, beside the function
+// that reads it, because storageHealth only runs later at call time, by
+// which point the admin block has had its chance to set it true.
+let webAuth = false;
 const storageHealth = () => ({
   xchg: !!xchg,
-  auth: !!cfg.adminUrl,
+  auth: webAuth,
   dbBytes: dbBytes(cfg.dbPath),
   servers: [...lastPoll].map(([id, at]) => ({ id, at })),
   keep: storage.keepPreview({ versionsDays: cfg.storageKeepVersionsDays, eventsDays: cfg.storageKeepEventsDays }),
@@ -1728,6 +1734,8 @@ http = new HttpSide(cfg, { routes, drain, discordOn: () => discord.configured })
 let web = null;
 if (process.env.ADMIN_PORT !== undefined && process.env.ADMIN_PORT !== '' && !Number.isFinite(Number(process.env.ADMIN_PORT))) {
   console.error('[admin] ADMIN_PORT is not a number: the admin web is off');
+} else if (process.env.ADMIN_PORT !== undefined && process.env.ADMIN_PORT !== '' && Number(process.env.ADMIN_PORT) < 0) {
+  console.error('[admin] ADMIN_PORT is not a port: the admin web is off');
 }
 if (cfg.adminPort > 0) {
   let auth = null;
@@ -1753,6 +1761,7 @@ if (cfg.adminPort > 0) {
       console.error(`[admin] ADMIN_URL is set but ${missing.join(', ')} is not: the admin web stays down`);
     } else {
       auth = storageAuth({ clientId: cfg.clientId, clientSecret: cfg.oauthSecret, guildId: cfg.guildId, roleIds: cfg.adminRoleIds, adminUrl: cfg.adminUrl });
+      webAuth = true;
     }
   }
   if (webUp) {

@@ -678,7 +678,7 @@ export class DiscordSide {
   isAdminMember(member) {
     if (!member) return false;
     const held = member.roles?.cache;
-    if (held && this.cfg.adminRoleIds.some((id) => held.has(id))) return true;
+    if (held && (this.cfg.adminRoleIds || []).some((id) => held.has(id))) return true;
     return !!member.permissions?.has(PermissionFlagsBits.Administrator);
   }
 

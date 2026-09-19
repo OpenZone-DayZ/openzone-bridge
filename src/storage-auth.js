@@ -1,6 +1,7 @@
 // Discord sign-in for the admin web (design 2026-09-19, section 15). An
-// option: on only when DISCORD_CLIENT_SECRET is set. The browser is sent
-// to Discord with a one-time state; Discord sends it back with a code; the
+// option: on when ADMIN_URL gives the page an outside address; the client
+// secret is then required. The browser is sent to Discord with a one-time
+// state; Discord sends it back with a code; the
 // bridge trades the code for a token, asks Discord who that is and which
 // roles they hold in the guild, and admits a holder of one of the admin
 // roles for twelve hours. The user's token serves those two calls and is
@@ -98,7 +99,12 @@ export function storageAuth({ clientId, clientSecret, guildId, roleIds, adminUrl
         return { ok: false, why: `Discord did not answer: ${e.message}` };
       }
       if (!traded.ok) return { ok: false, why: `Discord refused the code (${traded.status})` };
-      const token = (await traded.json()).access_token;
+      let token = '';
+      try {
+        token = String((await traded.json()).access_token || '');
+      } catch {
+        token = '';
+      }
       if (!token) return { ok: false, why: 'Discord sent no token' };
       // A refused answer and no answer at all are told apart by the status
       // the error carries: the first is Discord's word, the second the network's.
@@ -132,11 +138,11 @@ export function storageAuth({ clientId, clientSecret, guildId, roleIds, adminUrl
     },
 
     cookie(session) {
-      return `${COOKIE}=${session}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL / 1000}${secure ? '; Secure' : ''}`;
+      return `${COOKIE}=${session}; HttpOnly; SameSite=Lax; Path=${home}; Max-Age=${SESSION_TTL / 1000}${secure ? '; Secure' : ''}`;
     },
 
     clearCookie() {
-      return `${COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure ? '; Secure' : ''}`;
+      return `${COOKIE}=; HttpOnly; SameSite=Lax; Path=${home}; Max-Age=0${secure ? '; Secure' : ''}`;
     },
 
     // What events are signed with: the name and the Discord id, so a renamed

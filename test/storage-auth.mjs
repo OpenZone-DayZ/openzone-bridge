@@ -64,7 +64,7 @@ ok('the guild nick wins over the global name', r2.name, 'Sidorovich');
 
 console.log('auth: sessions');
 const cookie = auth.cookie(r.session);
-ok('the cookie is http-only, same-site, secure under https, twelve hours', cookie, `oz_admin=${r.session}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200; Secure`);
+ok('the cookie is http-only, same-site, secure under https, twelve hours', cookie, `oz_admin=${r.session}; HttpOnly; SameSite=Lax; Path=/storage/; Max-Age=43200; Secure`);
 ok('the session is found behind its cookie among others', auth.sessionOf(`theme=dark; ${cookie.split(';')[0]}`).name, 'Stalker');
 ok('a signature carries the name and the Discord id', auth.signature(auth.sessionOf(cookie)), 'Stalker (42)');
 ok('no cookie, no session', [auth.sessionOf(''), auth.sessionOf(undefined)], [null, null]);
@@ -78,11 +78,17 @@ ok('a state expires after ten minutes', await (async () => {
 })(), { ok: false, why: 'the sign-in expired; try again' });
 const r3 = await auth.callback('good', freshState());
 ok('logout forgets the session', [auth.logout(auth.cookie(r3.session)), auth.sessionOf(auth.cookie(r3.session)), auth.logout('')], [true, null, false]);
-ok('the clearing cookie is empty and expired', auth.clearCookie(), 'oz_admin=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0; Secure');
+ok('the clearing cookie is empty and expired', auth.clearCookie(), 'oz_admin=; HttpOnly; SameSite=Lax; Path=/storage/; Max-Age=0; Secure');
 const plain = storageAuth({ clientId: 'C', clientSecret: 'S', guildId: 'G', roleIds: ['1'], adminUrl: 'http://localhost:8788', fetch: fakeFetch });
 ok('under http the cookie is not marked Secure and home is the root', [plain.cookie('x').includes('Secure'), plain.home, plain.redirect], [false, '/', 'http://localhost:8788/auth/callback']);
+ok('the plain instance still roots its cookie at /', plain.cookie('x').includes('Path=/;'), true);
 const dead = storageAuth({ clientId: 'C', clientSecret: 'S', guildId: 'G', roleIds: ['1'], adminUrl: 'https://admin.example', fetch: async () => { throw new Error('ENOTFOUND'); } });
 ok('Discord unreachable is a refusal in words', await dead.callback('good', new URL(dead.loginUrl()).searchParams.get('state')), { ok: false, why: 'Discord did not answer: ENOTFOUND' });
+const badJson = storageAuth({
+  clientId: 'C', clientSecret: 'S', guildId: 'G', roleIds: ['1'], adminUrl: 'https://admin.example',
+  fetch: async (url) => (url.endsWith('/oauth2/token') ? { ok: true, status: 200, json: async () => { throw new Error('bad json'); } } : answer(404, {})),
+});
+ok('a token answer that is not json is refused in words', await badJson.callback('good', new URL(badJson.loginUrl()).searchParams.get('state')), { ok: false, why: 'Discord sent no token' });
 
 let failOn = '';
 const flaky = async (url, init = {}) => {
