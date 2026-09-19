@@ -46,7 +46,8 @@
     return el;
   }
   const view = document.getElementById('view');
-  const show = (...nodes) => view.replaceChildren(...nodes);
+  const only = (xs) => xs.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false && x !== '');
+  const show = (...nodes) => view.replaceChildren(...only(nodes));
   const msg = (text, bad) => h('div', { class: bad ? 'msg bad' : 'msg' }, text);
   const notice = (text, bad) => {
     const m = msg(text, bad);
@@ -197,11 +198,11 @@
         if (nodes[0].loc_type === 2) slots.push(nodes);
         else if (nodes[0].row < 0) unplaced.push(nodes);
       }
-      aside.replaceChildren(
+      aside.replaceChildren(...only([
         unplaced.length ? h('h3', null, s('unplaced')) : null,
         ...unplaced.map((nodes) => h('div', { class: 'mono' }, `${nodes[0].type} (${nodes.length})`)),
         slots.length ? h('h3', null, s('in_slots')) : null,
-        ...slots.map((nodes) => h('div', { class: 'mono' }, `${nodes[0].slot}: ${nodes[0].type} (${nodes.length})`)));
+        ...slots.map((nodes) => h('div', { class: 'mono' }, `${nodes[0].slot}: ${nodes[0].type} (${nodes.length})`))]));
       tree.replaceChildren(h('ul', null, roots.map((nodes, idx) => (nodes ? rootNode(nodes, idx) : null))));
     }
 
