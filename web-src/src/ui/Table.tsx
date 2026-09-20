@@ -14,13 +14,15 @@ export type Col<T> = {
   title?: string;
 };
 
-export function Table<T>({ cols, rows, rowKey, initialSort, pick, empty }: {
+export function Table<T>({ cols, rows, rowKey, initialSort, pick, empty, onRow }: {
   cols: Col<T>[];
   rows: T[];
   rowKey: (row: T) => string;
   initialSort?: { key: string; desc?: boolean };
   pick?: (row: T) => boolean;
   empty?: ReactNode;
+  // A row that answers a click (the table then shows a pointer on it).
+  onRow?: (row: T) => void;
 }) {
   const [sort, setSort] = useState<{ key: string; desc: boolean } | null>(initialSort ? { key: initialSort.key, desc: !!initialSort.desc } : null);
   const sorted = useMemo(() => {
@@ -56,7 +58,7 @@ export function Table<T>({ cols, rows, rowKey, initialSort, pick, empty }: {
       </thead>
       <tbody>
         {sorted.map((r) => (
-          <tr key={rowKey(r)} className={pick && pick(r) ? 'pick' : ''}>
+          <tr key={rowKey(r)} className={`${pick && pick(r) ? 'pick' : ''}${onRow ? ' clickable' : ''}`} onClick={onRow ? () => onRow(r) : undefined}>
             {cols.map((c) => (
               <td key={c.key} className={`${c.mono ? 'mono' : ''}${c.num ? ' num' : ''}`}>{c.render(r)}</td>
             ))}

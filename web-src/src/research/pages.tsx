@@ -2,14 +2,16 @@
 // with their pools, the statics, the journal. A change is a candidate the
 // game applies and answers; the answer lands on the page as it comes.
 
-import { useEffect, useState } from 'react';
-import { api, type Answer } from '../api/client';
+import { useState } from 'react';
+import { api } from '../api/client';
 import { useLang, type Key } from '../i18n';
 import { href } from '../app/router';
 import { useToast } from '../app/toasts';
 import { Badge, Confirm, Field, Loading, Notice, Panel } from '../ui/bits';
 import { Table, type Col } from '../ui/Table';
 import { useAnswer } from '../storage/pages';
+import { unzipSync, strFromU8 } from 'fflate';
+import { isName, parseText, serialize } from './editor/schema';
 
 export type ConfigSummary = {
   name: string; file: string; exists: boolean; size: number; version: number; at: string; by: string; source: string;
@@ -86,6 +88,7 @@ export function ConfigsPage() {
           ))}
           {status.data.unanswered > 0 && <Badge tone="alert">{s('r_unanswered')}: {status.data.unanswered}</Badge>}
           <span className="grow" />
+          <ZipUpload onDone={reload} />
           <Confirm warn label={s('r_reload')} question={s('r_c_reload')} onConfirm={async () => { await run('reload', {}); reload(); }} />
         </div>
       )}
@@ -120,116 +123,47 @@ export function ConfigsPage() {
   );
 }
 
-export function ConfigPage({ name }: { name: string }) {
+// A starter pack: a zip holding the nine OZ_Research_*.json files (any
+// folder inside), each sent to the game as a candidate.
+function ZipUpload({ onDone }: { onDone: () => void }) {
   const { s } = useLang();
   const toast = useToast();
-  const [current, setCurrent] = useState<ConfigText | null>(null);
-  const [shown, setShown] = useState<ConfigText | null>(null);
-  const [text, setText] = useState('');
-  const [history, setHistory] = useState<ConfigVersion[]>([]);
-  const [why, setWhy] = useState('');
-  const [waiting, setWaiting] = useState('');
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    let alive = true;
-    Promise.all([
-      api<ConfigText>('research', 'config', { name }),
-      api<{ versions: ConfigVersion[] }>('research', 'history', { name, limit: 100 }),
-    ]).then(([c, h]) => {
-      if (!alive) return;
-      if (!c.ok) return setWhy(c.why);
-      setWhy('');
-      setCurrent(c);
-      setShown(c);
-      setText(c.text);
-      setHistory(h.ok ? h.versions : []);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [name, tick]);
-  const reload = () => setTick((t) => t + 1);
-
-  const view = async (v: ConfigVersion) => {
-    const c = await api<ConfigText>('research', 'config', { name, version: v.version });
-    if (!c.ok) return toast(`${s('error')}: ${c.why}`, true);
-    setShown(c);
-    setText(c.text);
-  };
-
-  const follow = async (sent: Answer<{ token: string; version: number; file: string }>) => {
-    if (!sent.ok) {
-      toast(`${s('error')}: ${sent.why}`, true);
-      return;
-    }
-    setWaiting(s('r_sent', { v: sent.version, token: sent.token }));
-    const answer = await awaitCommand(sent.token, 20);
-    setWaiting('');
-    if (!answer) toast(s('r_answer_wait'), true);
-    else if (answer.ok) toast(s('r_answer_ok', { note: answer.answer }));
-    else toast(s('r_answer_bad', { why: answer.answer }), true);
-    reload();
-  };
-
-  const save = async () => {
+  const [busy, setBusy] = useState(false);
+  const pick = async (file: File | undefined) => {
+    if (!file) return;
+    setBusy(true);
     try {
-      JSON.parse(text);
+      const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+      let sent = 0;
+      for (const [path, bytes] of Object.entries(entries)) {
+        const m = /OZ_Research_([A-Za-z]+)\.json$/.exec(path);
+        if (!m) continue;
+        const name = `Research${m[1]}`;
+        if (!isName(name)) continue;
+        const parsed = parseText(name, strFromU8(bytes));
+        if (parsed.why) {
+          toast(`${name}: ${s('r_not_json', { why: parsed.why })}`, true);
+          continue;
+        }
+        const r = await api<{ token: string }>('research', 'save', { name, json: serialize(name, parsed.doc) });
+        if (!r.ok) toast(`${name}: ${r.why}`, true);
+        else sent++;
+      }
+      toast(sent ? s('e_zip_sent', { n: sent }) : s('e_zip_none'), !sent);
+      onDone();
     } catch (e) {
-      toast(s('r_not_json', { why: (e as Error).message }), true);
-      return;
+      toast(`${s('error')}: ${(e as Error).message}`, true);
+    } finally {
+      setBusy(false);
     }
-    await follow(await api<{ token: string; version: number; file: string }>('research', 'save', { name, json: text }));
   };
-
-  const cols: Col<ConfigVersion>[] = [
-    { key: 'version', label: s('version'), num: true, render: (v) => v.version, sort: (v) => v.version },
-    { key: 'status', label: s('status'), render: (v) => <StatusBadge status={v.status} /> },
-    { key: 'at', label: s('when'), mono: true, render: (v) => v.at, sort: (v) => v.at },
-    { key: 'by', label: s('who'), render: (v) => v.by },
-    { key: 'source', label: s('source'), render: (v) => v.source },
-    { key: 'size', label: s('r_size'), num: true, render: (v) => v.size },
-    { key: 'why', label: s('note'), render: (v) => v.why },
-    { key: 'actions', label: s('actions'), render: (v) => (
-      <span className="row">
-        <button type="button" className="small ghost" onClick={() => view(v)}>{s('r_view')}</button>
-        {v.status !== 'pending' && (
-          <Confirm small warn label={s('r_restore')} question={s('r_c_restore', { v: v.version, name })}
-            onConfirm={async () => follow(await api<{ token: string; version: number; file: string }>('research', 'restore', { name, version: v.version }))} />
-        )}
-      </span>
-    ) },
-  ];
-
-  const dirty = shown !== null && text !== shown.text;
   return (
-    <>
-      <h1>{name.replace(/^Research/, '')} <span className="muted small">{name}</span></h1>
-      {why && <Notice tone="bad">{why}</Notice>}
-      {!current && !why && <Loading />}
-      {current && shown && (
-        <>
-          <Panel tight>
-            <div className="row">
-              <span>{s('version')} <b>{shown.version}</b></span>
-              <StatusBadge status={shown.status} />
-              <span className="muted">{s('r_by')} {shown.by} · <span className="mono">{shown.at}</span></span>
-              {shown.version !== current.version && <span className="alert small">{s('r_latest')}: {current.version}</span>}
-              <span className="grow" />
-              <Confirm primary disabled={!dirty} label={s('r_save')} question={s('r_c_save', { name })} onConfirm={save} />
-              {dirty && <button type="button" className="ghost" onClick={() => setText(shown.text)}>{s('close')}</button>}
-            </div>
-          </Panel>
-          {waiting && <Notice>{waiting}</Notice>}
-          <p className="muted small">{s('r_editor_soon')}</p>
-          <textarea value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} style={{ width: '100%', minHeight: 360 }} />
-          <h2>{s('r_history')}</h2>
-          <Table cols={cols} rows={history} rowKey={(v) => String(v.version)} initialSort={{ key: 'version', desc: true }} pick={(v) => v.version === shown.version} />
-        </>
-      )}
-    </>
+    <label className="button small" title={s('e_zip')}>
+      {busy ? s('loading') : s('e_zip')}
+      <input type="file" accept=".zip" style={{ display: 'none' }} disabled={busy} onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ''; }} />
+    </label>
   );
 }
-
 export function FactionsPage() {
   const { s } = useLang();
   const { data, why, reload } = useAnswer<{ owners: Owner[] }>('research', 'state', {}, []);

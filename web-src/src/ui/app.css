@@ -95,6 +95,7 @@ table.grid tr:hover td { background: var(--hover); }
 table.grid td.mono { font: var(--mono); }
 table.grid td.num, table.grid th.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.grid tr.pick td { background: var(--pick); }
+table.grid tr.clickable { cursor: pointer; }
 
 /* badges, bars, confirm */
 .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font: var(--font-small); background: var(--raised); color: var(--muted); border: 1px solid var(--rule); white-space: nowrap; }
@@ -166,3 +167,58 @@ table.grid tr.pick td { background: var(--pick); }
   .cells { grid-template-columns: repeat(10, 26px); }
   .cells div { width: 26px; height: 26px; }
 }
+
+/* the config editor */
+.tabs { display: flex; gap: 4px; margin: var(--space-gap) 0; }
+.editor { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--space-column); align-items: start; }
+.editor-side { position: sticky; top: 64px; max-height: calc(100vh - 80px); overflow: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; }
+.rowform .head { display: flex; align-items: center; gap: var(--space-gap); margin-bottom: var(--space-gap); }
+.rowform .head h2 { margin: 0; flex: 1 1 auto; }
+.fields { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.fields > .field { flex: 0 1 160px; }
+.fields > .field.wide, .fields > fieldset.sub { flex: 1 1 100%; }
+.field .k { color: var(--muted); font: var(--font-small); }
+.check-field { flex-direction: row; align-items: center; gap: 8px; }
+fieldset.sub { border: 1px solid var(--rule); border-radius: var(--radius); padding: 6px 10px 10px; margin: 0; }
+fieldset.sub legend { color: var(--muted); font: var(--font-small); padding: 0 4px; }
+.strings { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+table.grid.sub { width: auto; }
+table.grid.sub td { padding: 2px 4px; border-bottom: none; }
+table.grid.sub input { height: 24px; }
+.suggest { position: relative; display: inline-block; }
+.suggest-list { position: absolute; top: 100%; left: 0; z-index: 8; background: var(--raised); border: 1px solid var(--edge); border-radius: var(--radius); min-width: 100%; max-height: 240px; overflow: auto; box-shadow: 0 6px 20px var(--dim); }
+.suggest-item { display: block; padding: 3px 8px; cursor: pointer; white-space: nowrap; }
+.suggest-item:hover { background: var(--pick); }
+ul.problems { margin: 0; padding-left: 18px; }
+ul.problems li { padding: 2px 0; }
+ul.problems a { color: inherit; }
+
+/* the canvases */
+.canvas { position: relative; height: 620px; border: 1px solid var(--edge); border-radius: 6px; overflow: hidden; background: var(--rail); margin-bottom: var(--space-gap); }
+.canvas .react-flow__background { background: var(--rail); }
+.canvas .react-flow__controls { background: var(--panel); border: 1px solid var(--edge); box-shadow: none; }
+.canvas .react-flow__controls button { background: var(--raised); color: var(--text); border-bottom: 1px solid var(--rule); fill: var(--text); }
+.canvas .react-flow__controls button:hover { background: var(--edge); }
+.canvas .react-flow__handle { width: 8px; height: 8px; background: var(--accent); border: 1px solid var(--rail); }
+.canvas .react-flow__node-header { pointer-events: none; }
+.canvas .react-flow__node-header button { pointer-events: auto; }
+.canvas-hint { position: absolute; left: 12px; bottom: 12px; background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius); padding: 6px 10px; max-width: 520px; z-index: 5; }
+.tcard, .tghost, .ccard { background: var(--panel); border: 1px solid var(--edge); border-radius: 6px; padding: 8px 10px; color: var(--text); font: var(--font-small); position: relative; box-sizing: border-box; }
+.tcard .name, .ccard .name { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+.tcard .id, .tghost .id { color: var(--muted); font: var(--mono); font-size: 11px; display: block; }
+.tcard .cost { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.tcard.pick, .ccard.pick { border-color: var(--accent); box-shadow: 0 0 0 2px var(--pick); }
+.tcard.bad, .ccard.bad { border-color: var(--bad); }
+.tcard .alarm, .ccard .alarm { position: absolute; top: 6px; right: 8px; color: var(--bad); font-weight: 700; }
+.tghost { border-style: dashed; color: var(--muted); }
+.ccard.off { opacity: 0.55; border-style: dashed; }
+.theader { display: flex; align-items: center; gap: 8px; color: var(--faint); font: var(--font-small); text-transform: uppercase; letter-spacing: 0.06em; width: 220px; }
+.tedge { stroke: var(--edge); stroke-width: 2; }
+.tedge.cross { stroke-dasharray: 6 4; }
+.tedge.pick { stroke: var(--bad); stroke-dasharray: 3 3; }
+.tedge-hit { stroke: transparent; stroke-width: 14; cursor: pointer; }
+.canvas .react-flow__edge-path { stroke: var(--edge); stroke-width: 1.5; }
+.canvas .react-flow__edge-textbg { fill: var(--panel); }
+.canvas .react-flow__edge-text { fill: var(--muted); font-size: 11px; }
+.canvas .react-flow__edge.selected .react-flow__edge-path { stroke: var(--accent); }
+@media (max-width: 1100px) { .editor { grid-template-columns: 1fr; } .editor-side { position: static; max-height: none; } }

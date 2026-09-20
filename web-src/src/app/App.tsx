@@ -13,7 +13,8 @@ import { BoxesPage } from '../storage/BoxesPage';
 import { BoxPage } from '../storage/BoxPage';
 import { FindPage, HealthPage, PlayerPage, ShelfPage, StorageJournalPage } from '../storage/pages';
 import { MapPage } from '../storage/MapPage';
-import { ConfigsPage, ConfigPage, FactionsPage, ResearchJournalPage, StaticsPage } from '../research/pages';
+import { ConfigsPage, FactionsPage, ResearchJournalPage, StaticsPage } from '../research/pages';
+import { EditorPage } from '../research/editor/EditorPage';
 import { JournalPage } from './JournalPage';
 
 export function App() {
@@ -154,7 +155,7 @@ function Gate() {
 function Page({ route }: { route: Route }): ReactNode {
   if (route.kind === 'all') return <JournalPage />;
   if (route.kind === 'research') {
-    if (route.page === 'config' && route.arg) return <ConfigPage name={route.arg} />;
+    if (route.page === 'config' && route.arg) return <EditorPage name={route.arg} />;
     if (route.page === 'factions') return <FactionsPage />;
     if (route.page === 'statics') return <StaticsPage />;
     if (route.page === 'journal') return <ResearchJournalPage />;
