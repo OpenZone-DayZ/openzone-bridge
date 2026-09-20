@@ -69,27 +69,29 @@ run, refuse to start without `.env`, and then just run `node src/index.js`.
 ## Running from the release
 
 Every `v*` tag is a GitHub release with `openzone-bridge-<version>-win32-x64.zip`: one
-`openzone-bridge.exe` (Node built in, nothing to install) with `web/`, `.env.example`,
+`openzone-bridge.exe` (Node built in, nothing to install) with `web/dist/` (the admin site), `.env.example`,
 this README and SETUP.md beside it. Unzip anywhere, copy `.env.example` to `.env` next to
 the exe, fill it in (SETUP.md), run `openzone-bridge.exe`. The exe reads `.env`, keeps its
 database in `state/` and serves `web/` from its own folder, whatever the current directory
-is; update by replacing the exe and `web/`, keep `.env` and `state/`. The console client
-`scripts/storage.mjs` is not in the exe -- the admin page covers it; the script needs Node
-and the repository.
+is; update by replacing the exe and `web/`, keep `.env` and `state/`. The console clients
+`scripts/storage.mjs` and `scripts/research.mjs` are not in the exe -- the admin site covers
+them; the scripts need Node and the repository.
 
 ## Building the release
 
-`npm run build:sea` bundles the sources with esbuild, makes a Node single-executable
+`npm run build` type-checks and builds the admin site (`web-src/` -> `web/dist/`, Vite);
+`npm run build:sea` then bundles the sources with esbuild, makes a Node single-executable
 blob and injects it into a copy of the running Node (`scripts/build-sea.mjs`); the result is
 `dist/openzone-bridge-<version>-<platform>-<arch>/` and its zip. The workflow
 `.github/workflows/release.yml` does the same on `windows-latest` for every tag and
-publishes the zip.
+publishes the zip; `build:sea` refuses to package without a built site.
 
 ## Tests
 
 ```
 npm run check     # every file in src/, test/ and scripts/ still parses
 npm test          # every offline suite, named one by one on purpose
+npm run test:web  # the admin site's unit tests (vitest): the editor's schema, checks, tree, chains
 npm run test:live # test/roundtrip.mjs against a running bridge
 ```
 
@@ -144,17 +146,23 @@ change is an event with the admin's name.
 
 ### The admin web
 
-`ADMIN_PORT` (8788) serves the storage admin page on **127.0.0.1 only**: the boxes;
-a box's grid, its contents as a tree and a filter by class; history with the
-difference between any version and the current one; a player's takings; a class
-across the server and who took it last; the shelf of parked roots; the bridge's
-health. Changes to a closed box -- rollback, shelf, move, edit, give, empty, return
-or throw away a parked root -- ask for confirmation, take effect at the box's next
-open, and are events with the admin's name. Three live buttons on a box's page --
-a report from the game, close now, remove from the world -- go to the game through
-the bridge's poll and show the game's answer within seconds. Plain HTML and
-JavaScript out of `web/`, Ukrainian and English by a switch in the header, no
-build step.
+`ADMIN_PORT` (8788) serves the admin site on **127.0.0.1 only**: one site, one door per
+kind (`POST /admin/v1/<kind>/<op>` over the very operations the console uses), with the
+storage pages and the research pages behind it. Storage: the boxes with search, filters
+and sorting; a box's grid, its contents as a tree with edit, shelf, move and give on each
+row, its versions as a timeline with a diff between any two and a rollback, and a live
+panel where the game's answers to report, close and remove land as they come; the shelf,
+find, a player's takings, the health, a journal of admin actions, and a map of boxes on
+the world's grid (`ADMIN_MAP_SIZE`, `ADMIN_MAP_IMAGE`). Research: the nine configs and
+their editor (below), the factions with their pools, the statics, the journal. A journal
+across both kinds merges them by time; a switch in the header picks the game server when
+the bridge has heard from more than one. Every confirmation is a second press in place;
+Ukrainian and English by a switch in the header.
+
+The site is `web-src/` (Vite + React 19 + TypeScript) built into `web/dist/` by
+`npm run build`; the bridge serves that directory and answers with a page that says so
+when it is missing. `npm run dev` serves the site from source with a proxy to a running
+bridge on 8788.
 
 Sign-in is optional and turns on with `ADMIN_URL`, the page's address as a browser
 sees it. Without it the page has no sign-in and asks for a name to sign the log
@@ -168,15 +176,61 @@ Redirects. Sessions last twelve hours and live in memory: a restart signs
 everyone out. A reverse proxy belongs in front of the page only with
 `ADMIN_URL` and its sign-in; the bridge refuses forwarded requests otherwise.
 The proxy must pass the path without a prefix, e.g.
-`location /storage/ { proxy_pass http://127.0.0.1:8788/; }`.
-
+`location /admin/ { proxy_pass http://127.0.0.1:8788/; }`.
 | `.env` key | Default | Meaning |
 |---|---|---|
 | `ADMIN_PORT` | 8788 | the admin page's port, on 127.0.0.1; 0 turns the page off |
 | `ADMIN_URL` | unset | the page's address as a browser sees it; turns Discord sign-in on |
 | `DISCORD_CLIENT_SECRET` | unset | Developer Portal -> OAuth2; required with ADMIN_URL; secret |
 | `DISCORD_ADMIN_ROLE_ID` | unset | the admin roles, comma-separated; required with ADMIN_URL |
+| `ADMIN_MAP_SIZE` | 15360 | the world's size in metres for the map page's grid (Chernarus) |
+| `ADMIN_MAP_IMAGE` | unset | a map image the page draws under the boxes' pins, served as `admin/map.png` |
 
+## Research configs
+
+The bridge is the editor and the history of the nine configs of `OpenZone_Research`
+(design: `docs/specs/2026-09-20-openzone-research-bridge-design.md` in the series hub).
+The truth of a config stays the file in the game server's profile; the bridge reads it
+itself when the game boots (`/v1/research/boot`) and after every applied edit
+(`/v1/research/changed`), and keeps every version of the text, deduplicated by a
+canonical hash so the game's rewrite of a candidate promotes it instead of doubling it.
+A change is a candidate: shape-checked, written into `research/xchg/`, announced to the
+game as a `cfg_apply` command in its poll, pending until the game answers
+(`/v1/research/result`) -- applied, or refused with the game's reason and the file left
+for the admin to look at. Live commands (`reset`, `grant`, `complete`, `reload`,
+`respawn`) ride the same poll; a command the game has not answered is re-sent on the
+server's first poll after a restart of either side. Without `RESEARCH_DIR` every research
+route refuses and the game keeps its configs to itself (the VPP editor still works).
+
+| `.env` key | Default | Meaning |
+|---|---|---|
+| `RESEARCH_DIR` | unset | the game server's `profiles/OpenZone` directory, on this machine |
+| `RESEARCH_XCHG_DIR` | `<RESEARCH_DIR>/research/xchg` | the exchange directory, when it is elsewhere |
+| `RESEARCH_KEEP_VERSIONS_DAYS` | 30 | versions older than this go, except each config's current one and any pending candidate |
+| `RESEARCH_KEEP_EVENTS_DAYS` | 90 | journal entries and answered commands older than this go |
+
+### From the console
+
+`node scripts/research.mjs <command>`: `configs`, `get <name> [version] [--out file]`,
+`put <name> <file>` (a candidate; waits for the game's answer), `history <name>`,
+`restore <name> <version>`, `state` (the factions' pools, nodes and projects), `classes`
+(the server's class list, dumped at boot), `reset <owner>`, `grant <owner> <type> <n>`,
+`complete <owner> <node>`, `reload`, `respawn <id>`, `result <token>`, `wait <token>`,
+`events`, `status`. Exit codes: 0 done, 1 refused by the bridge or the game, 2 usage,
+3 the bridge does not answer, 4 the game did not answer in time.
+
+### The editor
+
+The admin site edits each config as a table of its rows with a form for the chosen row
+(rules and tree nodes grouped by their groups and branches), checks the text the way the
+game will -- a mirror of every `Validate()` and `Check()`, weighed as the game weighs it:
+dropped, disabled, a warning, a note -- against the server's own class list, the point
+types, the tree and the owners, and sends it as a candidate. The tree has a canvas (a
+column per Tier; a drag between columns sets the Tier, a connection adds a parent unless
+it would close a cycle) and a balance of what grants points against what the tree
+spends, per owner; the rules have a chain canvas with an edge wherever an output feeds
+an input by the station's own match, and the dead samples and unfed inputs named. The
+text and the history are tabs; a starter pack goes in as a zip of the nine files.
 ## State
 
 Everything the bridge remembers -- account links, conversation keys, the chat

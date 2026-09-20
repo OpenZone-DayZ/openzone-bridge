@@ -119,7 +119,12 @@ openssl rand -hex 32
 - `.env` → `STORAGE_XCHG_DIR` — only on a host that also runs the DayZ server with
   `OpenZone_Storage`: the server profile's `OpenZone/Storage/xchg` directory.
   `STORAGE_KEEP_VERSIONS_DAYS` (14) and `STORAGE_KEEP_EVENTS_DAYS` (90) bound the history.
-- `.env` → `ADMIN_PORT` (8788): the storage admin page, on this machine only. To
+- `.env` → `RESEARCH_DIR` — only on a host that also runs the DayZ server with
+  `OpenZone_Research`: the server profile's `OpenZone` directory (the one with the
+  `OZ_Research_*.json` files). The bridge keeps every version of the nine configs and
+  edits them through the admin site.
+- `.env` → `ADMIN_PORT` (8788): the admin site (storage boxes, research configs), on
+  this machine only; it needs `npm run build` once (the release zip has it built). To
   sign admins in through Discord, set `ADMIN_URL` to the page's address as a
   browser sees it, add `<ADMIN_URL>/auth/callback` under Developer Portal →
   OAuth2 → Redirects, paste Developer Portal → OAuth2 → Reset Secret into

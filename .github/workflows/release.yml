@@ -18,6 +18,7 @@ jobs:
           node-version: '24'
       - run: npm ci
       - run: npm test
+      - run: npm run build
       - run: npm run build:sea
       - name: publish
         env:

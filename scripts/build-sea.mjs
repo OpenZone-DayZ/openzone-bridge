@@ -8,7 +8,7 @@
 import { build } from 'esbuild';
 import { inject } from 'postject';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -55,7 +55,14 @@ await inject(exe, 'NODE_SEA_BLOB', readFileSync(join(dist, 'sea-prep.blob')), {
 const out = join(dist, name);
 mkdirSync(out);
 copyFileSync(exe, join(out, exeName));
-cpSync(join(root, 'web'), join(out, 'web'), { recursive: true });
+// The admin site as built by `npm run build`: the exe serves web/dist beside
+// itself, and a release without it would serve the stub page to every admin.
+const site = join(root, 'web', 'dist');
+if (!existsSync(join(site, 'index.html'))) {
+  console.error('web/dist/index.html is missing: run `npm run build` before `npm run build:sea`');
+  process.exit(1);
+}
+cpSync(site, join(out, 'web', 'dist'), { recursive: true });
 for (const f of ['.env.example', 'README.md', 'SETUP.md', 'LICENSE']) copyFileSync(join(root, f), join(out, f));
 
 // 5. The zip, with the platform's own tool.
