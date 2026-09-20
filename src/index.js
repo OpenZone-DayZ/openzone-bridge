@@ -27,7 +27,6 @@ import { ResearchStore } from './research-store.js';
 import { ResearchXchg } from './research-xchg.js';
 import { researchRoutes } from './research-routes.js';
 import { researchAdmin } from './research-admin.js';
-import { buildClassIndex, splitDirs } from './research-classes.js';
 import { statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './history.js';
@@ -126,7 +125,6 @@ const cfg = {
   researchKeepVersionsDays: days('RESEARCH_KEEP_VERSIONS_DAYS', 30),
   researchKeepEventsDays: days('RESEARCH_KEEP_EVENTS_DAYS', 90),
   // The folders the class index is built from on this host (';'-separated).
-  classPboDirs: splitDirs(process.env.CLASS_PBO_DIRS),
   // The storage admin web (design section 15): its own port on loopback,
   // 0 = off; ADMIN_URL is the page's outside address and turns Discord
   // sign-in on, which then needs the client secret.
@@ -193,10 +191,10 @@ function serverStarted(id) {
   saveServerKinds();
   console.log(`[bridge] ${id} started fresh: its kinds are forgotten until they boot`);
 }
-function serverBooted(id, kind) {
+function serverBooted(id, kind, at = new Date()) {
   const entry = serverKinds.get(id) || { since: '', kinds: {} };
   const first = !entry.kinds[kind];
-  entry.kinds[kind] = new Date().toISOString();
+  entry.kinds[kind] = at.toISOString();
   serverKinds.set(id, entry);
   saveServerKinds();
   if (first) console.log(`[bridge] ${id} runs ${kind}`);
@@ -204,9 +202,13 @@ function serverBooted(id, kind) {
 // What the site's server switch and the health pages show.
 const serversInfo = () => [...lastPoll].map(([id, at]) => ({ id, at, since: serverKinds.get(id)?.since || '', kinds: { ...(serverKinds.get(id)?.kinds || {}) } }));
 // A boot route wrapped so an accepted boot marks the kind on its server.
+// The time is taken before the letter is handled: whatever the handler
+// stamps as seen (storage-store.js, boot) is then at or after it, and a
+// box last seen earlier was not in the world at that boot.
 const marksKind = (kind, fn) => async (body) => {
+  const at = new Date();
   const out = await fn(body);
-  if (out && out.ok) serverBooted(String(body.ServerId || ''), kind);
+  if (out && out.ok) serverBooted(String(body.ServerId || ''), kind, at);
   return out;
 };
 const dbBytes = (path) => {
@@ -256,42 +258,13 @@ const researchPush = (obj) => {
   queuePush(null, obj, 'research');
   http?.wake();
 };
-// The class index built here, from CLASS_PBO_DIRS: once at start, again on
-// the admin's word. One build at a time; the result replaces the stored
-// index the same way the site's importer does.
-let classBuild = null;
-let classBuilt = { at: '', classes: 0, mods: 0, ms: 0, why: '' };
-function buildClassIndexHere(who) {
-  if (!cfg.classPboDirs.length) return Promise.resolve({ ok: false, why: 'CLASS_PBO_DIRS is not set' });
-  if (classBuild) return classBuild;
-  classBuild = (async () => {
-    try {
-      const r = await buildClassIndex(cfg.classPboDirs);
-      research.metaSet('classindex', JSON.stringify(r.raw));
-      classBuilt = { at: new Date().toISOString().slice(0, 19).replace('T', ' '), classes: r.stats.classes, mods: r.stats.mods, ms: r.ms, why: '' };
-      research.record({ kind: 'classindex', admin: who, note: `${r.stats.classes} class(es) from ${r.stats.mods} mod(s) in ${(r.ms / 1000).toFixed(1)} s; ${r.stats.pboOk} PBO with configs, ${r.stats.pboFailed} unreadable` });
-      console.log(`[research] class index: ${r.stats.classes} classes from ${r.stats.mods} mods in ${(r.ms / 1000).toFixed(1)} s (${r.stats.pboTotal} PBO, ${r.stats.pboFailed} unreadable)`);
-      for (const s of r.skipped) console.log(`[research] class index: skipped ${s.source}: ${s.reason}`);
-      return { ok: true, classes: r.stats.classes, mods: r.stats.mods, ms: r.ms };
-    } catch (e) {
-      classBuilt = { ...classBuilt, why: e.message };
-      console.warn(`[research] class index failed: ${e.message}`);
-      return { ok: false, why: e.message };
-    } finally {
-      classBuild = null;
-    }
-  })();
-  return classBuild;
-}
 const researchStatus = () => ({
   booted: researchRoutesSide.booted(),
-  pboDirs: cfg.classPboDirs,
-  classBuild: { running: !!classBuild, ...classBuilt },
   classes: researchRoutesSide.classes().count,
   servers: serversInfo(),
   keep: research.keepPreview({ versionsDays: cfg.researchKeepVersionsDays, eventsDays: cfg.researchKeepEventsDays }),
 });
-const researchAdminOps = researchAdmin({ store: research, xchg: researchXchg, push: researchPush, status: researchStatus, buildIndex: buildClassIndexHere });
+const researchAdminOps = researchAdmin({ store: research, xchg: researchXchg, push: researchPush, status: researchStatus });
 const researchRoutesSide = researchRoutes({ store: research, xchg: researchXchg, admin: researchAdminOps });
 loadServerKinds();
 
@@ -2068,12 +2041,6 @@ async function main() {
   await http.listen();
   console.log('[bridge] ready');
 
-  // The class index from the host's PBO folders, in the background: minutes
-  // of reading must not hold the poll or the pages.
-  if (cfg.classPboDirs.length) {
-    console.log(`[research] class index: building from ${cfg.classPboDirs.length} folder(s)`);
-    buildClassIndexHere('bridge');
-  }
 }
 
 main().catch((e) => {

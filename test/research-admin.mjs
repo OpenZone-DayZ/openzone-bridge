@@ -9,6 +9,7 @@ import { Store } from '../src/store.js';
 import { ResearchStore } from '../src/research-store.js';
 import { ResearchXchg, NAMES } from '../src/research-xchg.js';
 import { researchAdmin } from '../src/research-admin.js';
+import { serverClassIndex } from '../src/research-xchg.js';
 
 const path = join(tmpdir(), `oz-research-admin-${process.pid}.sqlite`);
 for (const f of [path, `${path}-wal`, `${path}-shm`]) if (existsSync(f)) unlinkSync(f);
@@ -32,7 +33,8 @@ writeFileSync(join(dir, 'OZ_Research_Settings.json'), JSON.stringify({ Version: 
 mkdirSync(join(dir, 'research', 'xchg'), { recursive: true });
 writeFileSync(join(dir, 'research', 'loner.json'), JSON.stringify({ Version: 1, Points: [{ Key: 'bio_field_t1', Value: 12 }], CompletedNodes: ['pb_osnovy'], ActiveProjects: [{ NodeId: 'pb_bio', StarterUid: '7656', EndSec: 100 }] }), 'utf8');
 writeFileSync(join(dir, 'research', 'broken.json'), '{oops', 'utf8');
-writeFileSync(join(dir, 'research', 'xchg', 'classes.txt'), 'access\r\nAll\r\nOZL_Microscope\r\n\r\n', 'utf8');
+writeFileSync(join(dir, 'research', 'xchg', 'classes.tsv'), '0\tInventory_Base\tStatic\t\t\r\n0\tAll\t\tSTR_DN_UNKNOWN\tSTR_DN_UNKNOWN\r\n0\tOZL_Microscope\tInventory_Base\tМікроскоп\tMicroscope\r\n0\tMouflonSteakMeat\tEdible_Base\t$UNT$Mouflon Steak\t$UNT$Mouflon Steak\r\n\r\nnot a row\r\n', 'utf8');
+writeFileSync(join(dir, 'research', 'xchg', 'classes.txt'), 'access\r\n', 'utf8');
 
 console.log('the exchange directory');
 
@@ -60,7 +62,7 @@ try {
 ok('a file that is not json is reported by name after a retry', threw, 'OZ_Research_Tree.json is not json');
 unlinkSync(join(dir, 'OZ_Research_Tree.json'));
 ok('states are read, a broken one in place', x.readStates().map((s) => [s.owner, s.points.length, s.completed, s.projects.length, !!s.error]), [['broken', 0, [], 0, true], ['loner', 1, ['pb_osnovy'], 1, false]]);
-ok('classes are read one per line, blanks dropped', x.readClasses().names, ['access', 'All', 'OZL_Microscope']);
+ok('classes are read per line with root, parent and names; a bare key is no name, $UNT$ no part of one, a broken line nothing', x.readClasses().rows, [{ root: 0, name: 'Inventory_Base', base: 'Static', original: '', english: '' }, { root: 0, name: 'All', base: '', original: '', english: '' }, { root: 0, name: 'OZL_Microscope', base: 'Inventory_Base', original: 'Мікроскоп', english: 'Microscope' }, { root: 0, name: 'MouflonSteakMeat', base: 'Edible_Base', original: 'Mouflon Steak', english: 'Mouflon Steak' }]);
 ok('a candidate name carries the config and the token', ResearchXchg.candidateName('ResearchOwners', 'abcdef012345'), 'ResearchOwners.abcdef012345.json');
 ok('and parses back', ResearchXchg.parseCandidate('ResearchOwners.abcdef012345.json'), { name: 'ResearchOwners', token: 'abcdef012345' });
 ok('a path is not a candidate name', ResearchXchg.parseCandidate('../ResearchOwners.abcdef012345.json'), null);
@@ -68,7 +70,7 @@ const file = x.writeCandidate('ResearchOwners', 'abcdef012345', '{"Version":1}')
 ok('writeCandidate leaves the file and no part', [existsSync(join(x.xchgDir, file)), readdirSync(x.xchgDir).some((f) => f.endsWith('.part'))], [true, false]);
 writeFileSync(join(x.xchgDir, 'ResearchOwners.000000000000.json.part'), 'half', 'utf8');
 writeFileSync(join(x.xchgDir, 'ResearchOwners.111111111111.json'), '{}', 'utf8');
-ok('sweep drops parts and candidates of finished commands, keeps the named ones and classes.txt', x.sweep(['abcdef012345']).sort(), ['ResearchOwners.000000000000.json.part', 'ResearchOwners.111111111111.json']);
+ok('sweep drops parts, candidates of finished commands and the old one-column dump, keeps the named ones', x.sweep(['abcdef012345']).sort(), ['ResearchOwners.000000000000.json.part', 'ResearchOwners.111111111111.json', 'classes.txt']);
 ok('the kept candidate is still there', x.hasCandidate(file), true);
 ok('discard removes it', [x.discard(file), x.hasCandidate(file)], [true, false]);
 
@@ -119,19 +121,24 @@ ok('reset, complete, reload, respawn are commands too', [admin.reset({ owner: 'l
 ok('a long admin name is cut, not refused', pushed.at(-1).by.length <= 40, true);
 ok('commands are all unanswered', s.unanswered().length, 8);
 ok('state reads the owners', admin.state().owners.map((o) => o.owner), ['broken', 'loner']);
-ok('classes reads the dump', admin.classes().count, 3);
+ok('classes before any boot is nothing', admin.classes({}), { ok: true, server: '', count: 0, at: '' });
 ok('events name the admin', admin.events({ limit: 3 }).events.map((e) => [e.kind, e.admin]), [['admin_respawn', 'tester'], ['admin_reload', 'tester'], ['admin_complete', 'tester']]);
 ok('status carries the kind\'s facts', [admin.status().configured, admin.status().classes, admin.status().unanswered], [true, 3, 8]);
 
 console.log('the class index');
 
-ok('no index yet', admin.classindex(), { ok: true, index: null, at: '' });
-ok('a broken index is refused', [admin.classindexput({ index: { v: 3 }, admin: 'tester' }).why, admin.classindexput({ index: { v: 3, mods: [], classes: [['x']] }, admin: 'tester' }).why], ['not a class index', 'a broken class row']);
-const idx = { v: 3, generated: '2026-09-20', mods: ['vanilla'], classes: [['Apple', -1, 0, 0, 'Apple', 'Apple']] };
-ok('an index is stored and counted', admin.classindexput({ index: idx, admin: 'tester' }), { ok: true, classes: 1, mods: 1 });
-ok('and answered whole, with when', [admin.classindex().index.classes.length, admin.classindex().at !== ''], [1, true]);
-ok('as text too', admin.classindexput({ index: JSON.stringify(idx), admin: 'tester' }).ok, true);
-ok('the journal names it', admin.events({ limit: 1 }).events[0].kind, 'admin_classindex');
+ok('no index before any boot', admin.classindex({}), { ok: true, server: '', index: null, at: '' });
+// What the boot route stores for a server: the index out of its dump and a summary.
+const dump = x.readClasses();
+s.metaSet('classindex:stand', JSON.stringify(serverClassIndex(dump.rows, 'stand', dump.at)), '2026-09-20 07:00:00');
+s.metaSet('classes:stand', JSON.stringify({ count: dump.count, at: dump.at }), '2026-09-20 07:00:00');
+s.metaSet('classindex:older', JSON.stringify(serverClassIndex([], 'older', 'x')), '2026-09-19 07:00:00');
+s.metaSet('classes:older', JSON.stringify({ count: 0, at: 'x' }), '2026-09-19 07:00:00');
+ok('classes names the last server to boot', [admin.classes({}).server, admin.classes({}).count], ['stand', 4]);
+ok('or the one asked for', [admin.classes({ server: 'older' }).count, admin.classes({ server: 'nope' }).count], [0, 0]);
+const idx = admin.classindex({});
+ok('classindex is the dump as rows with the parent row, one mod (the server), names from the tables', [idx.server, idx.index.mods, idx.index.classes, idx.at], ['stand', ['stand'], [['Inventory_Base', -1, 0, 0, '', ''], ['All', -1, 0, 0, '', ''], ['OZL_Microscope', 0, 0, 0, 'Мікроскоп', 'Microscope'], ['MouflonSteakMeat', -1, 0, 0, 'Mouflon Steak', 'Mouflon Steak']], dump.at]);
+ok('a parent is found in the same root first, then in any', serverClassIndex([{ root: 4, name: 'AKM', base: 'Rifle_Base', original: '', english: '' }, { root: 0, name: 'Rifle_Base', base: '', original: '', english: '' }, { root: 4, name: 'Rifle_Base', base: '', original: '', english: '' }, { root: 1, name: 'Mag', base: 'Rifle_Base', original: '', english: '' }], 's', 'x').classes.map((c) => c[1]), [2, -1, -1, 1]);
 
 console.log('admin ops without a directory');
 

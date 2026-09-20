@@ -9,7 +9,7 @@
 //   node scripts/research.mjs history <name> [n]
 //   node scripts/research.mjs restore <name> <version>
 //   node scripts/research.mjs state                                (the factions: pools, nodes, projects)
-//   node scripts/research.mjs classes [--out file]
+//   node scripts/research.mjs classes [--out file]                (the server's class dump; --out writes it as a table)
 //   node scripts/research.mjs reset <owner>
 //   node scripts/research.mjs grant <owner> <type> <n>
 //   node scripts/research.mjs complete <owner> <node>
@@ -192,12 +192,23 @@ switch (cmd) {
     break;
   }
   case 'classes': {
-    const r = await call('classes', {});
+    // The server's dump as the bridge holds it: a count, or with --out the
+    // whole index as a table (root, class, parent, name in the original
+    // column, name in the English one).
     if (OUT) {
-      writeFileSync(OUT, r.names.join('\n') + '\n', 'utf8');
-      console.log(`${r.count} class(es) as of ${r.at} written to ${OUT}`);
+      const r = await call('classindex', {});
+      if (!r.index) {
+        console.error('no class dump from the game yet');
+        throw new Leave(1);
+      }
+      const roots = ['CfgVehicles', 'CfgMagazines', 'CfgNonAIVehicles', 'CfgAmmo', 'cfgWeapons'];
+      const rows = r.index.classes;
+      const lines = rows.map((c) => [roots[c[3]] || c[3], c[0], c[1] >= 0 ? rows[c[1]][0] : '', c[4], c[5]].join('\t'));
+      writeFileSync(OUT, lines.join('\n') + '\n', 'utf8');
+      console.log(`${lines.length} class(es) of server ${r.server} as of ${r.at} written to ${OUT}`);
     } else {
-      console.log(`${r.count} class(es) as of ${r.at || 'never'}`);
+      const r = await call('classes', {});
+      console.log(`${r.count} class(es) of server ${r.server || '(none yet)'} as of ${r.at || 'never'}`);
     }
     break;
   }

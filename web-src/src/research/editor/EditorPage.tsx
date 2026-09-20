@@ -24,7 +24,6 @@ import { useClassIndex } from '../classes/useClassIndex';
 // The other configs an editor reads for its checks and pickers, fetched
 // once per page and kept for the session.
 const docCache = new Map<string, Promise<Doc | null>>();
-let classCache: Promise<string[]> | null = null;
 
 function otherDoc(name: ConfigName): Promise<Doc | null> {
   let p = docCache.get(name);
@@ -33,11 +32,6 @@ function otherDoc(name: ConfigName): Promise<Doc | null> {
     docCache.set(name, p);
   }
   return p;
-}
-
-function classList(): Promise<string[]> {
-  if (!classCache) classCache = api<{ names: string[] }>('research', 'classes').then((r) => (r.ok ? r.names : []));
-  return classCache;
 }
 
 const TABLE_COLS: Record<ConfigName, string[]> = {
@@ -81,7 +75,6 @@ export function EditorPage({ name }: { name: string }) {
   const [group, setGroup] = useState<number | null>(null);
   const [text, setText] = useState('');
   const [waiting, setWaiting] = useState('');
-  const [classes, setClasses] = useState<Set<string> | null>(null);
   const [others, setOthers] = useState<Partial<Record<ConfigName, Doc | null>>>({});
   const [tick, setTick] = useState(0);
   const cfgName = isName(name) ? name : null;
@@ -107,7 +100,6 @@ export function EditorPage({ name }: { name: string }) {
       setGroup(null);
       setTab('table');
     });
-    classList().then((list) => alive && setClasses(new Set(list)));
     const needed: ConfigName[] = ['ResearchPointTypes', 'ResearchTree', 'ResearchOwners', 'ResearchDataItems', 'ResearchRules'].filter((n) => n !== cfgName) as ConfigName[];
     Promise.all(needed.map((n) => otherDoc(n).then((d) => [n, d] as const))).then((pairs) => {
       if (alive) setOthers(Object.fromEntries(pairs));
@@ -127,14 +119,12 @@ export function EditorPage({ name }: { name: string }) {
   const pointTypesDoc = cfgName === 'ResearchPointTypes' ? doc : others.ResearchPointTypes ?? null;
   const treeDoc = cfgName === 'ResearchTree' ? doc : others.ResearchTree ?? null;
   const ownersDoc = cfgName === 'ResearchOwners' ? doc : others.ResearchOwners ?? null;
-  // Existence: the server's own list from its last boot, and the index the
-  // admin imported; a class in either is a class.
+  // Existence: the server's own classes from its last boot (the index the
+  // bridge built out of the dump); null until it arrives.
   const known = useMemo(() => {
-    if (!classes && !held.index) return null;
-    const set = new Set<string>(classes ? [...classes] : []);
-    if (held.index) for (const row of held.index.classes) set.add(row[0]);
-    return set;
-  }, [classes, held.index]);
+    if (!held.index) return null;
+    return new Set<string>(held.index.classes.map((row) => row[0]));
+  }, [held.index]);
   const ctx = useMemo(() => ({
     classes: known,
     pointTypes: pointTypesDoc ? new Set((pointTypesDoc.PointTypes as Doc[]).map((p) => String(p.Id))) : undefined,
@@ -143,14 +133,14 @@ export function EditorPage({ name }: { name: string }) {
   }), [known, pointTypesDoc, treeDoc, ownersDoc]);
   const problems = useMemo(() => (doc && cfgName ? validate(cfgName, doc, ctx) : []), [doc, cfgName, ctx]);
   const suggest = useMemo<Suggest>(() => ({
-    classes: classes ? [...classes] : [],
+    classes: known ? [...known] : [],
     pointTypes: ctx.pointTypes ? [...ctx.pointTypes] : [],
     nodeIds: ctx.nodeIds ? [...ctx.nodeIds] : [],
     owners: ctx.owners ? [...ctx.owners] : [],
     devices: ownersDoc ? [...new Set((ownersDoc.Owners as Doc[]).flatMap((o) => [...(o.DeviceClasses as string[]), ...(o.TerminalClasses as string[])]))] : [],
     index: held.index,
     lang,
-  }), [classes, ctx, ownersDoc, held.index, lang]);
+  }), [ctx, ownersDoc, held.index, lang]);
   const pointNames = useMemo(() => new Map((pointTypesDoc ? (pointTypesDoc.PointTypes as Doc[]) : []).map((p) => [String(p.Id), String(p.Name)])), [pointTypesDoc]);
 
   const dirty = doc !== null && base !== null && serialize(cfgName || 'ResearchSettings', doc) !== serialize(cfgName || 'ResearchSettings', base);

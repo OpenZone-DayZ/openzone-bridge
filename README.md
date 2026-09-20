@@ -208,14 +208,13 @@ route refuses and the game keeps its configs to itself (the VPP editor still wor
 | `RESEARCH_XCHG_DIR` | `<RESEARCH_DIR>/research/xchg` | the exchange directory, when it is elsewhere |
 | `RESEARCH_KEEP_VERSIONS_DAYS` | 30 | versions older than this go, except each config's current one and any pending candidate |
 | `RESEARCH_KEEP_EVENTS_DAYS` | 90 | journal entries and answered commands older than this go |
-| `CLASS_PBO_DIRS` | unset | the folders the bridge reads the game's classes from, `;`-separated (the game folder, mod folders); builds the class index at start and on demand |
 
 ### From the console
 
 `node scripts/research.mjs <command>`: `configs`, `get <name> [version] [--out file]`,
 `put <name> <file>` (a candidate; waits for the game's answer), `history <name>`,
 `restore <name> <version>`, `state` (the factions' pools, nodes and projects), `classes`
-(the server's class list, dumped at boot), `reset <owner>`, `grant <owner> <type> <n>`,
+(the server's classes, dumped at boot; `--out` writes them as a table), `reset <owner>`, `grant <owner> <type> <n>`,
 `complete <owner> <node>`, `reload`, `respawn <id>`, `result <token>`, `wait <token>`,
 `events`, `status`. Exit codes: 0 done, 1 refused by the bridge or the game, 2 usage,
 3 the bridge does not answer, 4 the game did not answer in time.
@@ -235,18 +234,19 @@ text and the history are tabs; a starter pack goes in as a zip of the nine files
 
 ### The class index
 
-Every class the game knows -- vanilla, the workshop mods, the series' own -- with its
-parent, its mod and its game name in two languages (the `original` and the `english`
-column of the stringtables), read out of the PBOs' headers and configs the way
-ZP_Research's editor did it. Two ways to get one: `CLASS_PBO_DIRS` in `.env` names the
-folders on the bridge's host, and the bridge builds the index at start and on the Classes
-page's button (the stand: 44 516 classes from 35 mods, 670 PBOs, 29 s on one thread);
-or the Classes page reads the folders picked in the browser (headers and configs only,
-a cache in the browser for the next time) and saves the result to the bridge. Either way
-the index feeds the editor's live search (a class name or a game name, in either
-language), the family test of the chain canvas (`IsKindOf` from the real inheritance),
-the game names on the cards, and the existence checks together with the server's own
-list from its last boot.
+Every class the server knows -- its five roots (`CfgVehicles`, `CfgMagazines`,
+`CfgNonAIVehicles`, `CfgAmmo`, `cfgWeapons`) with the parent of each class and its game
+name in two languages -- comes from the game itself. At every boot `OpenZone_Research`
+dumps them into the exchange directory (`classes.tsv`), reading the `original` and the
+`english` column of every `stringtable.csv` it can open in the loaded archives (the
+series' mods, CF, VPP); a class whose key no table holds gets the name the server itself
+resolves, in its own language, which is how vanilla comes out English. The bridge turns
+the dump into an index per server, kept in SQL, and the site reads the chosen server's:
+the editor's live search (a class name or a game name, in either language), the family
+test of the chain canvas (`IsKindOf` from the real inheritance), the game names on the
+cards and the existence checks all use it. Nothing to import, nothing to configure: a
+restart with other mods brings another list (the stand: 12 937 classes, 6 stringtables,
+half a second of the boot).
 
 ### Sections blocked for mods the server does not run
 

@@ -15,20 +15,29 @@ const COMMAND_MAX = 800;
 const BY_MAX = 40;
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-const safeParse = (s) => {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return null;
-  }
-};
-
-export function researchAdmin({ store, xchg, push, status, buildIndex }) {
+export function researchAdmin({ store, xchg, push, status }) {
   const bad = (why) => ({ ok: false, why });
   const off = bad('research not configured');
   const limitOf = (v) => Math.min(1000, Math.max(1, Math.trunc(Number(v)) || 100));
   const who = (admin) => String(admin || 'admin').slice(0, BY_MAX);
   const idOf = (v) => (ID.test(String(v ?? '')) ? String(v) : '');
+
+  // The server whose class dump to answer: the named one, else the last
+  // to boot. What the boot route stored: a summary (count, when the game
+  // wrote the dump) beside the index itself.
+  function pickServer(server) {
+    const sid = String(server || '');
+    const rows = store.metaList('classes:');
+    const row = sid ? rows.find((r) => r.key === `classes:${sid}`) : rows[0];
+    if (!row) return null;
+    let summary = { count: 0, at: '' };
+    try {
+      summary = JSON.parse(row.value);
+    } catch {
+      // an unreadable summary counts as none
+    }
+    return { server: row.key.slice('classes:'.length), summary };
+  }
 
   // A command for the game: in SQL first (so a bridge restart re-sends it),
   // then into every server's next poll.
@@ -196,40 +205,29 @@ export function researchAdmin({ store, xchg, push, status, buildIndex }) {
     },
 
     servers: () => ({ ok: true, servers: status ? (status().servers || []) : [] }),
-    classes: () => {
+    // The classes of the chosen server (the last to boot when none is
+    // named), as the game dumped them at its boot: the count and when
+    // here, the index whole from `classindex` -- the shape the site's
+    // classIndex.ts parses, with the parents and the names in both
+    // languages the server read out of its stringtables.
+    classes: ({ server }) => {
       if (!xchg) return off;
-      return { ok: true, ...xchg.readClasses() };
+      const found = pickServer(server);
+      if (!found) return { ok: true, server: '', count: 0, at: '' };
+      return { ok: true, server: found.server, ...found.summary };
     },
 
-    // The class index the admin site builds out of the game's PBOs (names,
-    // parents, display names in two languages), kept here so every admin
-    // and every check sees the same one. `classindex` answers it whole;
-    // `classindexput` stores a new one after a look at its shape.
-    classindex: () => {
-      const row = store.metaGet('classindex');
-      if (!row) return { ok: true, index: null, at: '' };
+    classindex: ({ server }) => {
+      if (!xchg) return off;
+      const found = pickServer(server);
+      if (!found) return { ok: true, server: '', index: null, at: '' };
+      const row = store.metaGet(`classindex:${found.server}`);
+      if (!row) return { ok: true, server: found.server, index: null, at: '' };
       try {
-        return { ok: true, index: JSON.parse(row.value), at: row.at };
+        return { ok: true, server: found.server, index: JSON.parse(row.value), at: found.summary.at };
       } catch {
-        return { ok: true, index: null, at: row.at };
+        return { ok: true, server: found.server, index: null, at: '' };
       }
-    },
-
-    // The index built on the bridge out of CLASS_PBO_DIRS, on demand.
-    classindexbuild: async ({ admin }) => {
-      if (!buildIndex) return bad('the bridge cannot build the index here');
-      return buildIndex(who(admin));
-    },
-
-    classindexput: ({ index, admin }) => {
-      const v = typeof index === 'string' ? safeParse(index) : index;
-      if (!v || typeof v !== 'object' || !Array.isArray(v.classes) || !Array.isArray(v.mods) || typeof v.v !== 'number') return bad('not a class index');
-      if (!v.classes.every((r) => Array.isArray(r) && typeof r[0] === 'string' && typeof r[1] === 'number' && typeof r[2] === 'number' && typeof r[3] === 'number')) return bad('a broken class row');
-      const text = JSON.stringify(v);
-      if (Buffer.byteLength(text, 'utf8') > 48 * 1024 * 1024) return bad('the index is too large');
-      store.metaSet('classindex', text);
-      store.record({ kind: 'admin_classindex', admin: who(admin), note: `${v.classes.length} class(es) from ${v.mods.length} mod(s), generated ${String(v.generated || '')}` });
-      return { ok: true, classes: v.classes.length, mods: v.mods.length };
     },
 
     reset: ({ owner, admin }) => {

@@ -28,6 +28,20 @@ export function diffRoots(aRoots, bRoots) {
 }
 
 export function storageAdmin({ store, xchg, push, health }) {
+  // Was a box in the world when the chosen server last started? The boot
+  // letter names every box the engine has and each is stamped seen at
+  // that moment (index.js takes the kind's time just before), so a box
+  // last seen before the storage boot was not there: gone, or the world
+  // reset. 'unknown' before any boot the bridge saw. The chosen server,
+  // else the first that booted storage.
+  function inWorld(server) {
+    const servers = health ? (health().servers || []) : [];
+    const sid = String(server || '');
+    const srv = (sid && servers.find((x) => x.id === sid)) || servers.find((x) => x.kinds && x.kinds.storage) || null;
+    const boot = srv && srv.kinds && srv.kinds.storage ? stampNow(new Date(srv.kinds.storage)) : '';
+    return (b) => ({ ...b, in_world: boot ? (b.last_seen_at >= boot ? 'yes' : 'no') : 'unknown', world_boot: boot });
+  }
+
   const bad = (why) => ({ ok: false, why });
   const limitOf = (v) => Math.min(1000, Math.max(1, Math.trunc(Number(v)) || 100));
   const dropCache = (id) => {
@@ -52,12 +66,14 @@ export function storageAdmin({ store, xchg, push, health }) {
   }
 
   return {
-    boxes: () => ({ ok: true, boxes: store.boxes() }),
+    // Every box, each with whether the chosen server had it in the world at
+    // its last boot.
+    boxes: ({ server } = {}) => ({ ok: true, boxes: store.boxes().map(inWorld(server)) }),
 
-    box: ({ id }) => {
+    box: ({ id, server }) => {
       const box = known(id);
       if (!box) return bad('unknown box');
-      return { ok: true, box, items: store.itemsOf(box.box_id), versions: store.versionsOf(box.box_id, 20) };
+      return { ok: true, box: inWorld(server)(box), items: store.itemsOf(box.box_id), versions: store.versionsOf(box.box_id, 20) };
     },
 
     history: ({ id, limit }) => {

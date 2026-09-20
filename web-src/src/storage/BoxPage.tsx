@@ -91,7 +91,9 @@ export function BoxPage({ id }: { id: string }) {
       </div>
       {form}
 
-      <LivePanel box={box} onChanged={load} />
+      {box.in_world === 'no' && box.status !== 'removed'
+        ? <Panel tight title={s('live_title')}><Notice tone="alert">{s('absent_text', { since: box.world_boot || '' })}</Notice></Panel>
+        : <LivePanel box={box} onChanged={load} />}
 
       <h2>{s('grid')}</h2>
       <Grid box={box} items={items} roots={roots} hit={hit} />

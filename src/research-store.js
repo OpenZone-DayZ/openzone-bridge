@@ -133,6 +133,7 @@ export class ResearchStore {
 
       metaGet: q('SELECT value, at FROM research_meta WHERE key = ?'),
       metaSet: q('INSERT INTO research_meta(key, value, at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, at = excluded.at'),
+      metaList: q('SELECT key, value, at FROM research_meta WHERE key LIKE ? ORDER BY at DESC, key'),
     };
   }
 
@@ -248,6 +249,11 @@ export class ResearchStore {
 
   metaGet(key) {
     return this.q.metaGet.get(key) || null;
+  }
+
+  // Every meta row whose key starts with `prefix`, newest first.
+  metaList(prefix) {
+    return this.q.metaList.all(`${String(prefix).replace(/[%_]/g, '\\$&')}%`);
   }
 
   metaSet(key, value, at = stampNow()) {

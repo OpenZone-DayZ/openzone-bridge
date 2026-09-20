@@ -45,7 +45,7 @@ export function BoxesPage() {
   const cols: Col<Box>[] = [
     { key: 'id', label: s('id'), mono: true, render: (b) => <BoxLink id={b.box_id} />, sort: (b) => b.box_id },
     { key: 'cls', label: s('cls'), render: (b) => sizeName(b.class), sort: (b) => b.class },
-    { key: 'status', label: s('status'), render: (b) => <StatusBadge status={b.status} />, sort: (b) => b.status },
+    { key: 'status', label: s('status'), render: (b) => <><StatusBadge status={b.status} />{b.in_world === 'no' && b.status !== 'removed' && <> <Badge tone="bad">{s('st_absent')}</Badge></>}</>, sort: (b) => (b.in_world === 'no' && b.status !== 'removed' ? `${b.status} absent` : b.status) },
     { key: 'items', label: s('items'), num: true, render: (b) => b.entities ?? 0, sort: (b) => b.entities ?? 0 },
     { key: 'roots', label: s('roots'), num: true, render: (b) => b.roots ?? 0, sort: (b) => b.roots ?? 0 },
     { key: 'version', label: s('version'), num: true, render: (b) => b.current_version, sort: (b) => b.current_version },

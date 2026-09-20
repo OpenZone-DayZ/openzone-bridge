@@ -6,7 +6,7 @@
 // The bridge reads the game's config files ITSELF: a letter only says which
 // file changed and who did it. Nothing the game sends is a config.
 
-import { ResearchXchg } from './research-xchg.js';
+import { ResearchXchg, serverClassIndex } from './research-xchg.js';
 import { stampNow } from './storage-wire.js';
 
 const list = (v) => (Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : []);
@@ -20,11 +20,13 @@ export function researchRoutes({ store, xchg, admin }) {
   const booted = new Map();
   const helloed = new Set();
   const served = new Set();
-  let classes = { names: [], count: 0, at: '' };
+  // Per server: how many classes its last dump held and when it was written.
+  const classesBy = new Map();
 
   const routes = {
     // The game after its start: which configs it holds, at which revision,
-    // and the class list it dumped. Every file becomes a version unless the
+    // and the classes it dumped -- those become this server's class index,
+    // kept in SQL for the site. Every file becomes a version unless the
     // newest applied one already holds its text.
     '/v1/research/boot': async ({ Json, ServerId }) => {
       if (!xchg) return off;
@@ -51,8 +53,16 @@ export function researchRoutes({ store, xchg, admin }) {
         configs++;
         if (s.fresh) fresh++;
       }
-      classes = xchg.readClasses();
-      booted.set(sid, { revision: rev, counters, at: stampNow(), classes: classes.count });
+      const dump = xchg.readClasses();
+      const at = stampNow();
+      if (dump.count) {
+        store.metaSet(`classindex:${sid}`, JSON.stringify(serverClassIndex(dump.rows, sid, dump.at)), at);
+        store.metaSet(`classes:${sid}`, JSON.stringify({ count: dump.count, at: dump.at }), at);
+        classesBy.set(sid, { count: dump.count, at: dump.at });
+      } else if (!classesBy.has(sid)) {
+        classesBy.set(sid, { count: 0, at: '' });
+      }
+      booted.set(sid, { revision: rev, counters, at, classes: dump.count });
       helloed.delete(sid);
       try {
         const swept = xchg.sweep(store.keepTokens());
@@ -60,9 +70,9 @@ export function researchRoutes({ store, xchg, admin }) {
       } catch (e) {
         console.warn(`[research] boot: sweep failed (${e.code || e.message})`);
       }
-      store.record({ kind: 'boot', serverId: sid, note: `revision ${rev}: ${configs} config(s), ${fresh} new version(s), ${classes.count} class(es); ${counters}` });
-      console.log(`[research] boot from ${sid}: ${configs} configs (${fresh} new versions), ${classes.count} classes, revision ${rev}`);
-      return { ok: true, configs, versions: fresh, classes: classes.count };
+      store.record({ kind: 'boot', serverId: sid, note: `revision ${rev}: ${configs} config(s), ${fresh} new version(s), ${dump.count} class(es); ${counters}` });
+      console.log(`[research] boot from ${sid}: ${configs} configs (${fresh} new versions), ${dump.count} classes, revision ${rev}`);
+      return { ok: true, configs, versions: fresh, classes: dump.count };
     },
 
     // The game applied an edit (the VPP editor, or our candidate): read the
@@ -174,7 +184,8 @@ export function researchRoutes({ store, xchg, admin }) {
   return {
     routes,
     poll,
-    classes: () => classes,
+    // The dump of one server, or of the last to boot since the bridge started.
+    classes: (sid = '') => classesBy.get(String(sid || '')) || [...classesBy.values()].at(-1) || { count: 0, at: '' },
     booted: () => [...booted].map(([id, b]) => ({ id, ...b })),
   };
 }

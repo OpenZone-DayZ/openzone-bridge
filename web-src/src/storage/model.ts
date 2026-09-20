@@ -11,6 +11,10 @@ export type Box = {
   status: 'closed' | 'open' | 'removed' | string;
   current_version: number;
   last_seen_at: string;
+  // Whether the chosen server had the box in the world at its last boot
+  // (storage-admin.js), and when that boot was.
+  in_world?: 'yes' | 'no' | 'unknown';
+  world_boot?: string;
   cache_stamp: string;
   cache_size: number;
   roots?: number;

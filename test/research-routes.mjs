@@ -51,7 +51,7 @@ gameWrite('ResearchOwners', OWNERS);
 gameWrite('ResearchSettings', { Version: 1, DefaultOwner: 'loner', ResearchPost: '', BasePost: 'research', TreeVisibilityDepth: 1 });
 mkdirSync(xdir, { recursive: true });
 writeFileSync(join(dir, 'research', 'loner.json'), JSON.stringify({ Version: 1, Points: [{ Key: 'bio_field_t1', Value: 12 }], CompletedNodes: ['pb_osnovy'], ActiveProjects: [] }), 'utf8');
-writeFileSync(join(xdir, 'classes.txt'), 'access\nAll\nOZL_Microscope\n', 'utf8');
+writeFileSync(join(xdir, 'classes.tsv'), '0\tInventory_Base\tStatic\t\t\n0\tOZL_Sample_Base\tInventory_Base\tЗразок\tSample\n0\tOZL_Microscope\tOZL_Sample_Base\t$STR_OZL_missing\t$STR_OZL_missing\n', 'utf8');
 const candidates = () => readdirSync(xdir).filter((f) => f.endsWith('.json'));
 
 console.log('without RESEARCH_DIR');
@@ -135,7 +135,7 @@ try {
   ok('the bridge said the directory is ready', log.includes(`[research] ${dir} ready`), true);
 
   ok('a fresh game gets no research mail on its first poll', await poll(true), []);
-  const boot = await call('/v1/research/boot', { Revision: 1, Counters: 'owners=1', Names: NAMES, Classes: 'classes.txt', ClassCount: 3 });
+  const boot = await call('/v1/research/boot', { Revision: 1, Counters: 'owners=1', Names: NAMES, Classes: 'classes.tsv', ClassCount: 3 });
   ok('boot reads the files that exist and the classes', boot, { ok: true, configs: 2, versions: 2, classes: 3 });
   ok('booting again with the same files makes no versions', (await call('/v1/research/boot', { Revision: 1, Counters: 'owners=1', Names: NAMES })).versions, 0);
   ok('the log says so', log.includes('[research] boot from research-test: 2 configs (2 new versions), 3 classes, revision 1'), true);
@@ -191,6 +191,9 @@ try {
   ok('and is answered', (await admin('result', { token: grant.token })).result.answer, 'points=bio_field_t1:15');
   ok('state reads the owners', (await admin('state')).owners.map((o) => [o.owner, o.completed]), [['loner', ['pb_osnovy']]]);
   ok('classes reads the dump', (await admin('classes')).count, 3);
+  const cidx = await admin('classindex');
+  ok('classindex is the server dump with parents and names, a bare key no name', [cidx.server, cidx.index.mods, cidx.index.classes], ['research-test', ['research-test'], [['Inventory_Base', -1, 0, 0, '', ''], ['OZL_Sample_Base', 0, 0, 0, 'Зразок', 'Sample'], ['OZL_Microscope', 1, 0, 0, '', '']]]);
+  ok('another server has no dump', [(await admin('classindex', { server: 'nope' })).index, (await admin('classes', { server: 'nope' })).count], [null, 0]);
   ok('status knows the booted server', (await admin('status')).booted.map((b) => [b.id, b.revision, b.classes]), [['research-test', 1, 3]]);
 
   // A command the game never answered, then the bridge restarts: the
