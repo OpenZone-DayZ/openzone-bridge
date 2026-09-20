@@ -169,7 +169,7 @@ export function storageAdmin({ store, xchg, push, health }) {
 
     result: ({ ref }) => ({ ok: true, result: store.resultOf(String(ref || '')) }),
 
-    journal: ({ limit }) => ({ ok: true, events: store.journal(limitOf(limit)) }),
+    journal: ({ limit, server }) => ({ ok: true, events: store.journal(limitOf(limit), String(server || '')) }),
 
     // The game servers the bridge has heard from, for the site's switch.
     servers: () => ({ ok: true, servers: health ? (health().servers || []) : [] }),

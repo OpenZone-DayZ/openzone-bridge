@@ -225,9 +225,9 @@ export function researchAdmin({ store, xchg, push, status }) {
       return command('respawn', { id: s }, admin, s);
     },
 
-    events: ({ limit }) => {
+    events: ({ limit, server }) => {
       if (!xchg) return off;
-      return { ok: true, events: store.events(limitOf(limit)) };
+      return { ok: true, events: store.events(limitOf(limit), String(server || '')) };
     },
 
     commands: ({ limit }) => {

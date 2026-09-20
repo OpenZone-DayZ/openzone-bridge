@@ -123,7 +123,7 @@ export class ResearchStore {
       cmdOld: q(`DELETE FROM research_commands WHERE status = 'answered' AND answered_at < ?`),
 
       evIns: q('INSERT INTO research_events(at, kind, note, server_id, admin, name, token) VALUES (?, ?, ?, ?, ?, ?, ?)'),
-      evList: q('SELECT * FROM research_events ORDER BY id DESC LIMIT ?'),
+      evList: q("SELECT * FROM research_events WHERE (? = '' OR server_id = ? OR server_id = '') ORDER BY id DESC LIMIT ?"),
       evOld: q('DELETE FROM research_events WHERE at < ?'),
     };
   }
@@ -242,8 +242,11 @@ export class ResearchStore {
     this.q.evIns.run(at, String(kind), String(note), String(serverId), String(admin), String(name), String(token));
   }
 
-  events(limit = 100) {
-    return this.q.evList.all(Math.max(1, Math.min(1000, Math.trunc(Number(limit)) || 100)));
+  // `serverId` narrows to one game server's events; the bridge's own
+  // (server_id empty) always show.
+  events(limit = 100, serverId = '') {
+    const s = String(serverId || '');
+    return this.q.evList.all(s, s, Math.max(1, Math.min(1000, Math.trunc(Number(limit)) || 100)));
   }
 
   // ---------- retention ----------

@@ -96,6 +96,8 @@ console.log('journal and retention');
 s.record({ kind: 'boot', note: 'revision 3', serverId: 'stand', at: '2026-09-20 10:06:00' });
 s.record({ kind: 'admin_grant', note: 'loner bio_field_t1 3', admin: 'covalschi', token: '111111111111', at: '2026-09-20 10:06:01' });
 ok('events newest first', s.events(10).map((e) => e.kind), ['admin_grant', 'boot']);
+ok('events of one server keep the bridge’s own', s.events(10, 'other').map((e) => e.kind), ['admin_grant']);
+ok('and the server’s', s.events(10, 'stand').map((e) => e.kind), ['admin_grant', 'boot']);
 // Four: Owners 1..4 (the rejected one too); never a config's current version, never a pending one.
 ok('keepPreview counts old versions but never the current or the pending', s.keepPreview({ versionsDays: 0, eventsDays: 0, now: new Date('2030-01-01T00:00:00Z') }), { versions: 4, events: 2 });
 const kept = s.keep({ versionsDays: 0, eventsDays: 0, now: new Date('2030-01-01T00:00:00Z') });
