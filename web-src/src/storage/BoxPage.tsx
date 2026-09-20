@@ -125,13 +125,14 @@ export function BoxPage({ id }: { id: string }) {
   );
 }
 
-// The cargo as the game lays it out: every root at its row and column,
-// spread over the cells its item's size covers -- turned on its side
-// (flip) width and height swap -- when the server's class index knows the
-// size, one cell when it does not.
+// The cargo as the game lays it out: a backdrop of empty cells, and every
+// root drawn as ONE block over the cells its item covers -- turned on its
+// side (flip) width and height swap -- when the server's class index knows
+// the size, one cell when it does not.
+const STEP = 34; // a 32 px cell plus the 2 px gap (app.css, .cells)
 function Grid({ box, items, roots, hit, index }: { box: Box; items: Item[]; roots: Item[][]; hit: (i: Item) => boolean; index: ClassIndex | null }) {
   const { s } = useLang();
-  const cover = new Map<string, { nodes: Item[]; head: boolean }>();
+  const blocks: ReactNode[] = [];
   const unplaced: Item[][] = [];
   const slots: Item[][] = [];
   for (const nodes of roots) {
@@ -148,26 +149,16 @@ function Grid({ box, items, roots, hit, index }: { box: Box; items: Item[]; root
     const size = index ? sizeOf(index, top.type) : null;
     const w = size ? (top.flip ? size[1] : size[0]) : 1;
     const h = size ? (top.flip ? size[0] : size[1]) : 1;
-    for (let r = 0; r < h; r++) {
-      for (let c = 0; c < w; c++) {
-        const key = `${top.row + r},${top.col + c}`;
-        if (!cover.has(key)) cover.set(key, { nodes, head: r === 0 && c === 0 });
-      }
-    }
+    blocks.push(
+      <div key={`b${top.root_idx}`} className={`block${nodes.some(hit) ? ' hit' : ''}`} style={{ left: top.col * STEP, top: top.row * STEP, width: w * STEP - 2, height: h * STEP - 2 }} title={`${top.type} (${nodes.length})${size ? `, ${w}×${h}` : ''}`}>{shortType(top.type)}</div>,
+    );
   }
   const cells: ReactNode[] = [];
   const rows = rowsOf(box, items);
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < COLS; col++) {
-      const at = cover.get(`${row},${col}`);
-      cells.push(at
-        ? <div key={`${row},${col}`} className={`item${at.nodes.some(hit) ? ' hit' : ''}${at.head ? '' : ' tail'}`} title={`${at.nodes[0].type} (${at.nodes.length})`}>{at.head ? shortType(at.nodes[0].type) : ''}</div>
-        : <div key={`${row},${col}`} />);
-    }
-  }
+  for (let i = 0; i < rows * COLS; i++) cells.push(<div key={i} className="cell" />);
   return (
     <div className="row" style={{ alignItems: 'flex-start' }}>
-      <div className="cells">{cells}</div>
+      <div className="cells">{cells}{blocks}</div>
       <div className="stack small">
         {unplaced.length > 0 && <div><div className="muted">{s('unplaced')}</div>{unplaced.map((n, i) => <div key={i} className="mono">{n[0].type} ({n.length})</div>)}</div>}
         {slots.length > 0 && <div><div className="muted">{s('in_slots')}</div>{slots.map((n, i) => <div key={i} className="mono">{n[0].slot}: {n[0].type} ({n.length})</div>)}</div>}
