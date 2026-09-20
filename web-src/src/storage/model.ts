@@ -102,9 +102,9 @@ export type LiveResult = { at: string; kind: string; note: string };
 
 export const COLS = 10;
 export const SIZES: Record<string, { rows: number; key: 'size_small' | 'size_medium' | 'size_large' }> = {
-  OZ_StorageBox_Small: { rows: 50, key: 'size_small' },
-  OZ_StorageBox_Medium: { rows: 100, key: 'size_medium' },
-  OZ_StorageBox_Large: { rows: 150, key: 'size_large' },
+  OZ_StorageBox_Small: { rows: 25, key: 'size_small' },
+  OZ_StorageBox_Medium: { rows: 50, key: 'size_medium' },
+  OZ_StorageBox_Large: { rows: 100, key: 'size_large' },
 };
 
 export const num = (v: number): number => Math.round(v * 100) / 100;

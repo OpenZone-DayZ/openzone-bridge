@@ -33,7 +33,7 @@ export function diffRoots(aRoots, bRoots) {
 // cargo size. A class the dump does not size counts as one cell and is
 // reported as unknown; a box class it does not size falls back to the
 // series' three boxes.
-const FALLBACK_CARGO = { oz_storagebox_small: 500, oz_storagebox_medium: 1000, oz_storagebox_large: 1500 };
+const FALLBACK_CARGO = { oz_storagebox_small: 250, oz_storagebox_medium: 500, oz_storagebox_large: 1000 };
 export function cellsOf(boxClass, items, sizes) {
   const cls = String(boxClass || '').toLowerCase();
   const own = sizes ? sizes.get(cls) : null;
