@@ -266,6 +266,26 @@ const backB = s.unparkOne(parkedB.parked, '2026-09-19 10:01:04');
 ok('unparkOne whose origin version was purged still succeeds', backB.ok, true);
 ok('its save version is found on an older surviving version of the box', s.versionsOf(BOX)[0].save_version, 142);
 
+console.log('cells and give against the server\'s sizes');
+
+{
+  // The sizes the core's dump gives (core-classes.js): the box, one small
+  // item, one that never fits.
+  const sizes = () => new Map([
+    ['oz_storagebox_large', { w: 10, h: 5, cw: 10, ch: 150 }],
+    ['apple', { w: 1, h: 1, cw: 0, ch: 0 }],
+    ['tent', { w: 10, h: 150, cw: 0, ch: 0 }],
+  ]);
+  const sized = storageAdmin({ store: s, xchg: x, push: (o) => pushed.push(o), health: () => ({ servers: [{ id: 'stand', at: '', since: '', kinds: { storage: '2026-09-20T00:00:00Z' } }] }), sizes });
+  const before = sized.box({ id: BOX }).box.cells;
+  ok('the box page counts the cargo in cells against the box\'s own cargo, unsized items as one', [before.max, before.used > 0, before.unknown > 0], [1500, true, true]);
+  ok('a give that fits is made', sized.give({ id: BOX, type: 'Apple', qty: 0, admin: 'tester' }).ok, true);
+  ok('and the count grew by its size', sized.box({ id: BOX }).box.cells.used, before.used + 1);
+  ok('a give with no room is refused before any version', [sized.give({ id: BOX, type: 'Tent', qty: 0, admin: 'tester' }).why.startsWith('no room:'), sized.box({ id: BOX }).box.cells.used], [true, before.used + 1]);
+  ok('an unsized class is given (the game decides at the open)', sized.give({ id: BOX, type: 'Mystery', qty: 0, admin: 'tester' }).ok, true);
+  ok('without sizes nothing is refused', storageAdmin({ store: s, xchg: x, push: () => {}, health: () => ({ servers: [] }) }).give({ id: BOX, type: 'Tent', qty: 0, admin: 'tester' }).ok, true);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();
 rmSync(dir, { recursive: true, force: true });

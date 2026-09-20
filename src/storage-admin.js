@@ -27,7 +27,43 @@ export function diffRoots(aRoots, bRoots) {
   return { gone: gone.sort(byType), came: came.sort(byType) };
 }
 
-export function storageAdmin({ store, xchg, push, health }) {
+// The cargo of a box in cells, out of the server's class sizes (the core's
+// dump): every root in the cargo by its item's width times height -- an
+// item turned on its side covers the same count -- against the box's own
+// cargo size. A class the dump does not size counts as one cell and is
+// reported as unknown; a box class it does not size falls back to the
+// series' three boxes.
+const FALLBACK_CARGO = { oz_storagebox_small: 500, oz_storagebox_medium: 1000, oz_storagebox_large: 1500 };
+export function cellsOf(boxClass, items, sizes) {
+  const cls = String(boxClass || '').toLowerCase();
+  const own = sizes ? sizes.get(cls) : null;
+  const max = own && own.cw && own.ch ? own.cw * own.ch : (FALLBACK_CARGO[cls] || 0);
+  let used = 0;
+  let unknown = 0;
+  for (const it of items) {
+    if (it.parent !== -1 || it.loc_type !== 3) continue;
+    const sz = sizes ? sizes.get(String(it.type).toLowerCase()) : null;
+    if (sz && sz.w && sz.h) used += sz.w * sz.h;
+    else {
+      used += 1;
+      unknown++;
+    }
+  }
+  return { used, max, unknown };
+}
+
+export function storageAdmin({ store, xchg, push, health, sizes = null }) {
+  // The class sizes of the chosen server, else of the first that runs
+  // storage: what the core dumped at its start (core-classes.js).
+  function sizesFor(server) {
+    if (!sizes) return null;
+    const sid = String(server || '');
+    if (sid) return sizes(sid);
+    const list = health ? (health().servers || []) : [];
+    const srv = list.find((x) => x.kinds && x.kinds.storage) || list[0];
+    return srv ? sizes(srv.id) : null;
+  }
+
   // Was a box in the world when the chosen server last started? The boot
   // letter names every box the engine has and each is stamped seen at
   // that moment (index.js takes the kind's time just before), so a box
@@ -73,7 +109,8 @@ export function storageAdmin({ store, xchg, push, health }) {
     box: ({ id, server }) => {
       const box = known(id);
       if (!box) return bad('unknown box');
-      return { ok: true, box: inWorld(server)(box), items: store.itemsOf(box.box_id), versions: store.versionsOf(box.box_id, 20) };
+      const items = store.itemsOf(box.box_id);
+      return { ok: true, box: { ...inWorld(server)(box), cells: cellsOf(box.class, items, sizesFor(server)) }, items, versions: store.versionsOf(box.box_id, 20) };
     },
 
     history: ({ id, limit }) => {
@@ -114,7 +151,18 @@ export function storageAdmin({ store, xchg, push, health }) {
       return r;
     },
 
-    give: ({ id, type, qty, admin }) => {
+    // A give the box has no cells for is refused here, before a version is
+    // made: the game would only park the item at the next open.
+    give: ({ id, type, qty, admin, server }) => {
+      const box = known(id);
+      if (box && box.status === 'closed') {
+        const map = sizesFor(server);
+        const sz = map ? map.get(String(type || '').toLowerCase()) : null;
+        if (sz && sz.w && sz.h) {
+          const c = cellsOf(box.class, store.itemsOf(box.box_id), map);
+          if (c.max > 0 && c.used + sz.w * sz.h > c.max) return bad(`no room: ${c.max - c.used} cell(s) free, ${type} needs ${sz.w}×${sz.h}`);
+        }
+      }
       const r = store.give(String(id || ''), String(type || ''), Number(qty) || 0, { admin });
       if (!r.ok) return r;
       dropCache(String(id));

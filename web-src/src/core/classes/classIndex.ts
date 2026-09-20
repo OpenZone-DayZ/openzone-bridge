@@ -32,7 +32,7 @@ export interface RawClassIndex {
   v: number;
   generated: string;
   mods: string[];
-  classes: Array<[string, number, number, number, string] | ClassRow>;
+  classes: Array<[string, number, number, number, string] | ClassRow | [string, number, number, number, string, string, number, number, number, number]>;
 }
 
 export interface ClassIndex {
@@ -40,6 +40,9 @@ export interface ClassIndex {
   generated: string;
   mods: string[];
   classes: ClassRow[];
+  // name.toLowerCase() -> [width, height] in cells (itemSize), for the rows
+  // of a v4 index; a v3 index has none.
+  sizes: Map<string, [number, number]>;
   // name.toLowerCase() -> row index. Lower-case on purpose: the game's
   // MatchClass and IsKindOf ignore case, so must the index. One flat map
   // for all five roots; a name that exists in two roots keeps the later
@@ -68,6 +71,7 @@ export function parseClassIndexJson(data: unknown): ClassIndex {
   }
   const classes: ClassRow[] = [];
   const byName = new Map<string, number>();
+  const sizes = new Map<string, [number, number]>();
   for (let i = 0; i < obj.classes.length; i++) {
     const row = obj.classes[i] as unknown[];
     if (!Array.isArray(row) || typeof row[0] !== 'string' || typeof row[1] !== 'number' || typeof row[2] !== 'number' || typeof row[3] !== 'number') {
@@ -77,8 +81,9 @@ export function parseClassIndexJson(data: unknown): ClassIndex {
     const english = typeof row[5] === 'string' ? row[5] : original;
     classes.push([row[0], row[1], row[2], row[3] as Root, original, english]);
     byName.set(row[0].toLowerCase(), i);
+    if (typeof row[6] === 'number' && typeof row[7] === 'number' && row[6] > 0 && row[7] > 0) sizes.set(row[0].toLowerCase(), [row[6], row[7]]);
   }
-  return { v: obj.v, generated: typeof obj.generated === 'string' ? obj.generated : '', mods: obj.mods, classes, byName };
+  return { v: obj.v, generated: typeof obj.generated === 'string' ? obj.generated : '', mods: obj.mods, classes, byName, sizes };
 }
 
 const MAX_CHAIN_DEPTH = 64;
@@ -166,6 +171,12 @@ export function searchClasses(index: ClassIndex, query: string, limit: number, l
     }
   }
   return prefixHits.concat(otherHits, displayHits).slice(0, limit);
+}
+
+// The item's size in cells as the config says it (width, height); null
+// when the index has no size for it. A turned item swaps the two.
+export function sizeOf(index: ClassIndex, cls: string): [number, number] | null {
+  return index.sizes.get(stripExact(cls).toLowerCase()) ?? null;
 }
 
 export function classRoot(index: ClassIndex, cls: string): Root | undefined {

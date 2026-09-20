@@ -12,6 +12,7 @@ import { Table, type Col } from '../ui/Table';
 import { StatusBadge } from './BoxesPage';
 import { SuggestInput } from '../ui/SuggestInput';
 import { useClassIndex } from '../core/classes/useClassIndex';
+import { sizeOf, type ClassIndex } from '../core/classes/classIndex';
 import {
   COLS, SIZES, cellOf, eventCell, groupRoots, isOk, num, rowsOf, shortType, stripRef,
   type Box, type Diff, type Event, type Item, type LiveResult, type Version,
@@ -26,6 +27,7 @@ type OnDone = (p: Changing) => Promise<boolean>;
 export function BoxPage({ id }: { id: string }) {
   const { s } = useLang();
   const toast = useToast();
+  const held = useClassIndex();
   const [data, setData] = useState<Loaded | null>(null);
   const [why, setWhy] = useState('');
   const [filter, setFilter] = useState('');
@@ -79,6 +81,7 @@ export function BoxPage({ id }: { id: string }) {
           <span className="k">{s('cls')}</span><span>{box.class} ({sizeName})</span>
           <span className="k">{s('version')}</span><span>{box.current_version}</span>
           <span className="k">{s('items')}</span><span>{items.length} ({s('roots').toLowerCase()}: {roots.filter(Boolean).length})</span>
+          <span className="k">{s('cells')}</span><span>{box.cells ? `${box.cells.used} / ${box.cells.max}${box.cells.unknown ? ` (${box.cells.unknown} ${s('cells_unknown')})` : ''}` : '—'}</span>
           <span className="k">{s('pos')}</span><span className="mono">{box.pos || '—'}</span>
           <span className="k">{s('placed_by')}</span><span>{box.placed_by || '—'} <span className="muted mono">{box.placed_at}</span></span>
           <span className="k">{s('last_seen')}</span><span className="mono">{box.last_seen_at || '—'}</span>
@@ -98,7 +101,7 @@ export function BoxPage({ id }: { id: string }) {
         : <LivePanel box={box} onChanged={load} />}
 
       <h2>{s('grid')}</h2>
-      <Grid box={box} items={items} roots={roots} hit={hit} />
+      <Grid box={box} items={items} roots={roots} hit={hit} index={held.index} />
 
       <h2>{s('tree')}</h2>
       <div className="tree">
@@ -122,25 +125,43 @@ export function BoxPage({ id }: { id: string }) {
   );
 }
 
-function Grid({ box, items, roots, hit }: { box: Box; items: Item[]; roots: Item[][]; hit: (i: Item) => boolean }) {
+// The cargo as the game lays it out: every root at its row and column,
+// spread over the cells its item's size covers -- turned on its side
+// (flip) width and height swap -- when the server's class index knows the
+// size, one cell when it does not.
+function Grid({ box, items, roots, hit, index }: { box: Box; items: Item[]; roots: Item[][]; hit: (i: Item) => boolean; index: ClassIndex | null }) {
   const { s } = useLang();
-  const at = new Map<string, Item[]>();
+  const cover = new Map<string, { nodes: Item[]; head: boolean }>();
   const unplaced: Item[][] = [];
   const slots: Item[][] = [];
   for (const nodes of roots) {
     if (!nodes) continue;
     const top = nodes[0];
-    if (top.loc_type === 2) slots.push(nodes);
-    else if (top.row < 0) unplaced.push(nodes);
-    else at.set(`${top.row},${top.col}`, nodes);
+    if (top.loc_type === 2) {
+      slots.push(nodes);
+      continue;
+    }
+    if (top.row < 0) {
+      unplaced.push(nodes);
+      continue;
+    }
+    const size = index ? sizeOf(index, top.type) : null;
+    const w = size ? (top.flip ? size[1] : size[0]) : 1;
+    const h = size ? (top.flip ? size[0] : size[1]) : 1;
+    for (let r = 0; r < h; r++) {
+      for (let c = 0; c < w; c++) {
+        const key = `${top.row + r},${top.col + c}`;
+        if (!cover.has(key)) cover.set(key, { nodes, head: r === 0 && c === 0 });
+      }
+    }
   }
   const cells: ReactNode[] = [];
   const rows = rowsOf(box, items);
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < COLS; col++) {
-      const nodes = at.get(`${row},${col}`);
-      cells.push(nodes
-        ? <div key={`${row},${col}`} className={`item${nodes.some(hit) ? ' hit' : ''}`} title={`${nodes[0].type} (${nodes.length})`}>{shortType(nodes[0].type)}</div>
+      const at = cover.get(`${row},${col}`);
+      cells.push(at
+        ? <div key={`${row},${col}`} className={`item${at.nodes.some(hit) ? ' hit' : ''}${at.head ? '' : ' tail'}`} title={`${at.nodes[0].type} (${at.nodes.length})`}>{at.head ? shortType(at.nodes[0].type) : ''}</div>
         : <div key={`${row},${col}`} />);
     }
   }

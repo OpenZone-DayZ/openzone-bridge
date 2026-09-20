@@ -15,6 +15,10 @@ export type Box = {
   // (storage-admin.js), and when that boot was.
   in_world?: 'yes' | 'no' | 'unknown';
   world_boot?: string;
+  // The cargo in cells, counted by the bridge out of the server's class
+  // sizes (the box page only): used, the box's own, and how many items the
+  // dump could not size (counted as one cell each).
+  cells?: { used: number; max: number; unknown: number };
   cache_stamp: string;
   cache_size: number;
   roots?: number;
@@ -98,9 +102,9 @@ export type LiveResult = { at: string; kind: string; note: string };
 
 export const COLS = 10;
 export const SIZES: Record<string, { rows: number; key: 'size_small' | 'size_medium' | 'size_large' }> = {
-  OZ_StorageBox_Small: { rows: 5, key: 'size_small' },
-  OZ_StorageBox_Medium: { rows: 10, key: 'size_medium' },
-  OZ_StorageBox_Large: { rows: 15, key: 'size_large' },
+  OZ_StorageBox_Small: { rows: 50, key: 'size_small' },
+  OZ_StorageBox_Medium: { rows: 100, key: 'size_medium' },
+  OZ_StorageBox_Large: { rows: 150, key: 'size_large' },
 };
 
 export const num = (v: number): number => Math.round(v * 100) / 100;

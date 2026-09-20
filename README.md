@@ -237,8 +237,9 @@ text and the history are tabs; a starter pack goes in as a zip of the nine files
 
 Every class the server knows -- its five roots (`CfgVehicles`, `CfgMagazines`,
 `CfgNonAIVehicles`, `CfgAmmo`, `cfgWeapons`) with the parent of each class and its game
-name in two languages -- comes from the game itself, and from the core rather than from
-any one mod, because every mod's editor needs it. At every start `OpenZone_Core` dumps
+name in two languages, its size in cells and its cargo's (`itemSize`, `itemsCargoSize`)
+-- comes from the game itself, and from the core rather than from any one mod, because
+every mod's editor needs it. At every start `OpenZone_Core` dumps
 them into `<PROFILE_DIR>/classes.tsv`, reading the `original` and the `english` column
 of every `stringtable.csv` it can open in the loaded archives (the series' mods, CF,
 VPP); a class whose key no table holds gets the name the server itself resolves, in its
@@ -247,7 +248,9 @@ server's first poll (and again after the game restarts) into an index per server
 in SQL, and the site reads the chosen server's under the `Server` section: the research
 editor's live search (a class name or a game name, in either language), the family test
 of the chain canvas (`IsKindOf` from the real inheritance), the game names on the cards,
-the existence checks and the storage boxes' `give` form all use it. Nothing to import: a
+the existence checks and the storage boxes' `give` form all use it; the box page counts
+the cargo in cells out of the sizes (a turned item covers the same count, the grid draws
+it turned) and `give` refuses an item the box has no cells for. Nothing to import: a
 restart with other mods brings another list (the stand: 12 937 classes, 6 stringtables,
 about a second of the start).
 

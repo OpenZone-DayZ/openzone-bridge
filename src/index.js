@@ -29,7 +29,7 @@ import { researchRoutes } from './research-routes.js';
 import { researchAdmin } from './research-admin.js';
 import { CoreStore } from './core-store.js';
 import { coreAdmin } from './core-admin.js';
-import { CLASSES_FILE, storeClassDump } from './core-classes.js';
+import { CLASSES_FILE, classSizes, storeClassDump } from './core-classes.js';
 import { statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './history.js';
@@ -258,7 +258,7 @@ const storageHealth = () => ({
   keep: storage.keepPreview({ versionsDays: cfg.storageKeepVersionsDays, eventsDays: cfg.storageKeepEventsDays }),
   map: { size: cfg.adminMapSize, image: !!cfg.adminMapImage && existsSync(cfg.adminMapImage) },
 });
-const storageAdminOps = storageAdmin({ store: storage, xchg, push: storagePush, health: storageHealth });
+const storageAdminOps = storageAdmin({ store: storage, xchg, push: storagePush, health: storageHealth, sizes: (sid) => classSizes(core, sid) });
 
 // Research: the same shape as storage -- a bad or missing directory turns
 // the kind off with one line and never the bridge.
