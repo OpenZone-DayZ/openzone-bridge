@@ -66,7 +66,7 @@ ok('a nul byte is refused', fileUnder(dir, '/a%00.js'), null);
 ok('a bad escape is refused, not thrown', fileUnder(dir, '/%E0%A4%A'), null);
 
 console.log('web: the built site');
-const web = adminWeb({ kinds, dir, allowedHosts: ['admin.example'], mapImage: join(dir, 'map.png') });
+const web = adminWeb({ kinds, dir, allowedHosts: ['admin.example'], mapImage: join(dir, 'map.png'), maxBody: 1 << 20 });
 const port = await web.listen(0);
 const home = await raw(port, 'GET', '/');
 ok('the page is served', [home.status, home.headers['content-type'], home.body], [200, 'text/html; charset=utf-8', '<!doctype html><title>t</title>']);

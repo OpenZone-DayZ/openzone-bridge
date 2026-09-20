@@ -5,12 +5,14 @@
 
 import type { Doc } from './schema';
 
-export const CARD_W = 220;
-export const CARD_H = 92;
-export const GHOST_H = 60;
-export const COL_STEP = 290;
-export const ROW_STEP = 120;
-export const TOP = 48;
+// A card is a FIXED size: what does not fit is cut with an ellipsis and shown
+// in full on hover, so a long cost never pushes a card into the next row.
+export const CARD_W = 236;
+export const CARD_H = 104;
+export const GHOST_H = 64;
+export const COL_STEP = 316;
+export const ROW_STEP = 132;
+export const TOP = 52;
 export const MAX_COLS = 60;
 
 export type TreeNodeDoc = {

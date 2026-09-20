@@ -21,16 +21,19 @@ type TreeFlowEdge = Edge<{ cross: boolean }, 'tree'>;
 function CardView({ data, selected }: NodeProps<CardNode>) {
   const { card, pointNames } = data;
   const n = card.node;
+  const costText = n.Cost.map((c) => `${pointNames.get(c.Type) || c.Type} ×${c.Amount}`).join(', ');
+  const title = `${n.Name || n.Id}\n${n.Id}${costText ? `\n${costText}` : ''}${n.ItemCost.length ? `\n+ ${n.ItemCost.map((c) => `${c.Classname} ×${c.Quantity}`).join(', ')}` : ''}`;
   return (
-    <div className={`tcard${card.problems ? ' bad' : ''}${selected ? ' pick' : ''}`} style={{ width: CARD_W, minHeight: CARD_H }} title={n.Id}>
+    <div className={`tcard${card.problems ? ' bad' : ''}${selected ? ' pick' : ''}`} style={{ width: CARD_W, height: CARD_H }} title={title}>
       <Handle type="target" position={Position.Left} />
       <Handle type="source" position={Position.Right} />
       <div className="name">{n.Name || n.Id}</div>
       <code className="id">{n.Id}</code>
       <div className="cost">
-        {n.Cost.map((c, i) => <span key={i} className="badge" title={c.Type}>{pointNames.get(c.Type) || c.Type} ×{c.Amount}</span>)}
-        {n.ItemCost.length > 0 && <span className="badge">+{n.ItemCost.length}</span>}
-        {n.ResearchTimeSec > 0 && <span className="badge accent">{n.ResearchTimeSec}s</span>}
+        {n.Cost.map((c, i) => <span key={i} className="chip">{c.Type} ×{c.Amount}</span>)}
+        {n.ItemCost.length > 0 && <span className="chip">+{n.ItemCost.length}</span>}
+        {n.ResearchTimeSec > 0 && <span className="chip accent">{n.ResearchTimeSec}s</span>}
+        {n.Cost.length === 0 && n.ItemCost.length === 0 && <span className="chip faint">—</span>}
       </div>
       {card.problems > 0 && <span className="alarm">!{card.problems}</span>}
     </div>
@@ -40,7 +43,7 @@ function CardView({ data, selected }: NodeProps<CardNode>) {
 function GhostView({ data }: NodeProps<GhostNode>) {
   const g = data.ghost;
   return (
-    <div className="tghost" style={{ width: CARD_W, minHeight: GHOST_H }} title={g.id}>
+    <div className="tghost" style={{ width: CARD_W, height: GHOST_H }} title={`${g.name || g.id}\n${g.id}`}>
       <Handle type="source" position={Position.Right} />
       <span className="small muted">{g.branchLabel}</span>
       <div className="name">{g.name || g.id}</div>
@@ -142,6 +145,7 @@ export function TreeCanvas({ doc, branchIdx, selected, problemsOf, pointNames, o
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
+        fitViewOptions={{ padding: 0.08, minZoom: 0.85, maxZoom: 1 }}
         minZoom={0.2}
         deleteKeyCode={null}
         onNodeClick={(_, node) => {

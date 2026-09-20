@@ -19,7 +19,9 @@ import { once } from 'node:events';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, posix, resolve, sep } from 'node:path';
 
-const MAX_BODY = 1 << 20;
+// Bigger than the game's listener: the class index the site uploads is a
+// few megabytes of JSON, and this door is loopback or signed in.
+const DEFAULT_MAX_BODY = 48 << 20;
 const API = '/admin/v1/';
 const KIND = /^[a-z]{1,16}$/;
 const OP = /^[a-z]{1,32}$/;
@@ -82,7 +84,7 @@ export function fileUnder(dir, urlPath) {
   return full;
 }
 
-export function adminWeb({ kinds, dir, allowedHosts = [], auth = null, mapImage = '' }) {
+export function adminWeb({ kinds, dir, allowedHosts = [], auth = null, mapImage = '', maxBody = DEFAULT_MAX_BODY }) {
   const hosts = new Set(allowedHosts.map((h) => String(h).toLowerCase()));
   const server = createServer((req, res) => {
     route(req, res).catch((e) => {
@@ -134,7 +136,7 @@ export function adminWeb({ kinds, dir, allowedHosts = [], auth = null, mapImage 
     const chunks = [];
     for await (const c of req) {
       size += c.length;
-      if (size > MAX_BODY) {
+      if (size > maxBody) {
         // Past the cap the body is refused either way, so there is nothing
         // left to keep it in memory for -- but the socket is the caller's,
         // not ours to sever: destroying it here raced the 400 answer below

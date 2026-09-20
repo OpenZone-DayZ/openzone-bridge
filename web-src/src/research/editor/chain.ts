@@ -28,17 +28,21 @@ const FAMILIES: Record<string, (cls: string) => boolean> = {
   ItemBase: () => true,
 };
 
-export function matchClass(actual: string, configured: string): boolean {
+export type KindOf = (actual: string, base: string) => boolean;
+
+export function matchClass(actual: string, configured: string, kindOf?: KindOf): boolean {
   if (configured === '') return false;
   const at = configured.indexOf('|');
   if (at > -1) return actual.toLowerCase() === configured.slice(0, at).toLowerCase();
+  // With the class index the family is the real one; without it, the approximation.
+  if (kindOf) return kindOf(actual, configured);
   const family = FAMILIES[configured];
   if (family) return family(actual);
   return actual.toLowerCase() === configured.toLowerCase();
 }
 
-export function matchInput(actualType: string, actualContent: string, cfgClass: string, cfgContent: string): boolean {
-  if (!matchClass(actualType, cfgClass)) return false;
+export function matchInput(actualType: string, actualContent: string, cfgClass: string, cfgContent: string, kindOf?: KindOf): boolean {
+  if (!matchClass(actualType, cfgClass, kindOf)) return false;
   if (cfgContent === '') return true;
   return actualContent === cfgContent;
 }
@@ -51,7 +55,7 @@ export function ruleKey(path: number[]): string {
   return `r:${path.join(':')}`;
 }
 
-export function buildChain(doc: Doc): ChainGraph {
+export function buildChain(doc: Doc, kindOf?: KindOf): ChainGraph {
   const nodes: RuleRef[] = [];
   arr(doc.Groups).forEach((g, gi) => {
     arr(g.Rules).forEach((rule, ri) => nodes.push({ path: [gi, ri], group: str(g.Id), rule, key: ruleKey([gi, ri]) }));
@@ -68,7 +72,7 @@ export function buildChain(doc: Doc): ChainGraph {
       for (const to of live) {
         if (to === from) continue;
         const input = rec(to.rule.InputItem);
-        if (!matchInput(cls, content, str(input.Classname), str(input.Content))) continue;
+        if (!matchInput(cls, content, str(input.Classname), str(input.Content), kindOf)) continue;
         const id = `${from.key}>${to.key}:${cls}:${content}`;
         if (seen.has(id)) continue;
         seen.add(id);

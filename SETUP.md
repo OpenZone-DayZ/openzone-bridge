@@ -123,6 +123,10 @@ openssl rand -hex 32
   `OpenZone_Research`: the server profile's `OpenZone` directory (the one with the
   `OZ_Research_*.json` files). The bridge keeps every version of the nine configs and
   edits them through the admin site.
+- `.env` → `CLASS_PBO_DIRS` — optional: the game folder and the mod folders on this
+  machine, `;`-separated, for the class index (the game's classes and their names in
+  the editor). Without it the Classes page of the site can read folders picked in the
+  browser instead.
 - `.env` → `ADMIN_PORT` (8788): the admin site (storage boxes, research configs), on
   this machine only; it needs `npm run build` once (the release zip has it built). To
   sign admins in through Discord, set `ADMIN_URL` to the page's address as a

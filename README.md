@@ -208,6 +208,7 @@ route refuses and the game keeps its configs to itself (the VPP editor still wor
 | `RESEARCH_XCHG_DIR` | `<RESEARCH_DIR>/research/xchg` | the exchange directory, when it is elsewhere |
 | `RESEARCH_KEEP_VERSIONS_DAYS` | 30 | versions older than this go, except each config's current one and any pending candidate |
 | `RESEARCH_KEEP_EVENTS_DAYS` | 90 | journal entries and answered commands older than this go |
+| `CLASS_PBO_DIRS` | unset | the folders the bridge reads the game's classes from, `;`-separated (the game folder, mod folders); builds the class index at start and on demand |
 
 ### From the console
 
@@ -231,6 +232,31 @@ it would close a cycle) and a balance of what grants points against what the tre
 spends, per owner; the rules have a chain canvas with an edge wherever an output feeds
 an input by the station's own match, and the dead samples and unfed inputs named. The
 text and the history are tabs; a starter pack goes in as a zip of the nine files.
+
+### The class index
+
+Every class the game knows -- vanilla, the workshop mods, the series' own -- with its
+parent, its mod and its game name in two languages (the `original` and the `english`
+column of the stringtables), read out of the PBOs' headers and configs the way
+ZP_Research's editor did it. Two ways to get one: `CLASS_PBO_DIRS` in `.env` names the
+folders on the bridge's host, and the bridge builds the index at start and on the Classes
+page's button (the stand: 44 516 classes from 35 mods, 670 PBOs, 29 s on one thread);
+or the Classes page reads the folders picked in the browser (headers and configs only,
+a cache in the browser for the next time) and saves the result to the bridge. Either way
+the index feeds the editor's live search (a class name or a game name, in either
+language), the family test of the chain canvas (`IsKindOf` from the real inheritance),
+the game names on the cards, and the existence checks together with the server's own
+list from its last boot.
+
+### Sections blocked for mods the server does not run
+
+The bridge remembers, per game server, when it last started (its first poll after a
+start) and which kinds have booted since -- storage sends its boot letter at mission
+start, research at start and on the bridge's request. A kind that never booted half a
+minute after the server's start is a mod the server does not load: the site dims the
+kind in the header and shows why instead of its pages, until a boot arrives. The
+memory survives a bridge restart, so a storage mod that boots only with the server is
+not forgotten when the bridge alone comes back.
 ## State
 
 Everything the bridge remembers -- account links, conversation keys, the chat

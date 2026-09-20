@@ -6,6 +6,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { useLang } from '../../i18n';
 import { Confirm } from '../../ui/bits';
 import { blank, type Doc, type Field } from './schema';
+import { searchClasses, type ClassIndex, type Lang } from '../classes/classIndex';
 
 export type Suggest = {
   classes: string[];
@@ -13,12 +14,17 @@ export type Suggest = {
   nodeIds: string[];
   owners: string[];
   devices: string[];
+  // The class index, when the bridge holds one: live search with game names.
+  index: ClassIndex | null;
+  lang: Lang;
 };
 
 const CLASS_KEYS = new Set(['Classname', 'ClassName', 'Device', 'TerminalClasses', 'DeviceClasses', 'RequiredWorn', 'RequiredTools', 'Devices']);
 const TYPE_KEYS = new Set(['Type']);
 const NODE_KEYS = new Set(['RequiredNode', 'Parents']);
 const OWNER_KEYS = new Set(['Owners', 'RequiredFactions', 'DefaultOwner']);
+
+const isClassKey = (key: string): boolean => CLASS_KEYS.has(key);
 
 function suggestionsFor(key: string, suggest: Suggest): string[] {
   if (CLASS_KEYS.has(key)) return key === 'Device' || key === 'Devices' || key === 'DeviceClasses' ? [...new Set([...suggest.devices, ...suggest.classes])] : suggest.classes;
@@ -30,21 +36,35 @@ function suggestionsFor(key: string, suggest: Suggest): string[] {
 
 // An input with a short list of matches under it: the class list holds
 // eleven thousand names, so a datalist would be a wall.
-export function SuggestInput({ value, onChange, options, mono = true, size }: { value: string; onChange: (v: string) => void; options: string[]; mono?: boolean; size?: number }) {
+type Match = { value: string; note: string };
+
+export function SuggestInput({ value, onChange, options, mono = true, size, index, lang }: { value: string; onChange: (v: string) => void; options: string[]; mono?: boolean; size?: number; index?: ClassIndex | null; lang?: Lang }) {
   const [open, setOpen] = useState(false);
   const needle = value.trim().toLowerCase();
-  const matches = useMemo(() => {
-    if (!open || !options.length) return [];
+  const matches = useMemo<Match[]>(() => {
+    if (!open) return [];
+    // The class index answers by class name and by game name, live; a plain
+    // list answers by prefix, then by substring.
+    if (index) {
+      const bare = needle.replace(/\|.*$/, '');
+      if (bare === '') return [];
+      return searchClasses(index, bare, 14, lang || 'uk').filter((h) => h.name !== value).map((h) => ({ value: h.name, note: h.display && h.display !== h.name ? h.display : '' }));
+    }
+    if (!options.length) return [];
     const starts = options.filter((o) => o.toLowerCase().startsWith(needle));
     const holds = needle.length >= 2 ? options.filter((o) => !o.toLowerCase().startsWith(needle) && o.toLowerCase().includes(needle)) : [];
-    return [...starts, ...holds].filter((o) => o !== value).slice(0, 12);
-  }, [open, options, needle, value]);
+    return [...starts, ...holds].filter((o) => o !== value).slice(0, 12).map((o) => ({ value: o, note: '' }));
+  }, [open, options, needle, value, index, lang]);
   return (
     <span className="suggest">
       <input className={mono ? 'mono' : ''} value={value} size={size} onChange={(e) => onChange(e.target.value)} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} />
       {matches.length > 0 && (
         <span className="suggest-list">
-          {matches.map((m) => <span key={m} className="suggest-item mono" onMouseDown={(e) => { e.preventDefault(); onChange(m); setOpen(false); }}>{m}</span>)}
+          {matches.map((m) => (
+            <span key={m.value} className="suggest-item" onMouseDown={(e) => { e.preventDefault(); onChange(m.value); setOpen(false); }}>
+              <span className="mono">{m.value}</span>{m.note && <span className="muted"> · {m.note}</span>}
+            </span>
+          ))}
         </span>
       )}
     </span>
@@ -67,7 +87,7 @@ export function FieldEditor({ field, value, onChange, suggest, label }: { field:
         );
       }
       if (field.long) return <label className="field wide">{head}<textarea value={String(value ?? '')} rows={3} onChange={(e) => onChange(e.target.value)} /></label>;
-      return <label className="field">{head}<SuggestInput value={String(value ?? '')} onChange={onChange} options={options} mono={options.length > 0 || field.key === 'Id'} /></label>;
+      return <label className="field">{head}<SuggestInput value={String(value ?? '')} onChange={onChange} options={options} mono={options.length > 0 || field.key === 'Id'} index={isClassKey(field.key) ? suggest.index : null} lang={suggest.lang} /></label>;
     case 'int':
       return <label className="field">{head}<input type="number" step={1} value={Number(value ?? 0)} onChange={(e) => onChange(e.target.value === '' ? 0 : Math.trunc(Number(e.target.value)))} /></label>;
     case 'float':
@@ -75,7 +95,7 @@ export function FieldEditor({ field, value, onChange, suggest, label }: { field:
     case 'bool':
       return <label className="field check-field">{head}<input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} /></label>;
     case 'strings':
-      return <StringsEditor head={head} values={Array.isArray(value) ? (value as string[]) : []} onChange={onChange} options={options} addLabel={s('e_add')} />;
+      return <StringsEditor head={head} values={Array.isArray(value) ? (value as string[]) : []} onChange={onChange} options={options} addLabel={s('e_add')} index={isClassKey(field.key) ? suggest.index : null} lang={suggest.lang} />;
     case 'numbers':
       return (
         <label className="field">{head}
@@ -98,7 +118,7 @@ export function FieldEditor({ field, value, onChange, suggest, label }: { field:
   }
 }
 
-function StringsEditor({ head, values, onChange, options, addLabel }: { head: ReactNode; values: string[]; onChange: (v: string[]) => void; options: string[]; addLabel: string }) {
+function StringsEditor({ head, values, onChange, options, addLabel, index, lang }: { head: ReactNode; values: string[]; onChange: (v: string[]) => void; options: string[]; addLabel: string; index: ClassIndex | null; lang: Lang }) {
   const set = (i: number, v: string) => onChange(values.map((x, j) => (j === i ? v : x)));
   return (
     <div className="field wide">
@@ -106,7 +126,7 @@ function StringsEditor({ head, values, onChange, options, addLabel }: { head: Re
       <div className="strings">
         {values.map((v, i) => (
           <span key={i} className="row">
-            <SuggestInput value={v} onChange={(x) => set(i, x)} options={options} size={28} />
+            <SuggestInput value={v} onChange={(x) => set(i, x)} options={options} size={28} index={index} lang={lang} />
             <button type="button" className="small ghost" onClick={() => onChange(values.filter((_, j) => j !== i))}>×</button>
           </span>
         ))}
@@ -134,7 +154,7 @@ function SubTable({ field, rows, onChange, suggest }: { field: Field; rows: Doc[
                 <td key={c.key}>
                   {c.kind === 'bool' ? <input type="checkbox" checked={!!r[c.key]} onChange={(e) => set(i, c.key, e.target.checked)} />
                     : c.kind === 'int' || c.kind === 'float' ? <input type="number" step={c.kind === 'int' ? 1 : 'any'} value={Number(r[c.key] ?? 0)} size={6} onChange={(e) => set(i, c.key, e.target.value === '' ? 0 : c.kind === 'int' ? Math.trunc(Number(e.target.value)) : Number(e.target.value))} />
-                      : <SuggestInput value={String(r[c.key] ?? '')} onChange={(v) => set(i, c.key, v)} options={suggestionsFor(c.key, suggest)} size={16} />}
+                      : <SuggestInput value={String(r[c.key] ?? '')} onChange={(v) => set(i, c.key, v)} options={suggestionsFor(c.key, suggest)} size={16} index={isClassKey(c.key) ? suggest.index : null} lang={suggest.lang} />}
                 </td>
               ))}
               <td><button type="button" className="small ghost" onClick={() => onChange(rows.filter((_, j) => j !== i))}>×</button></td>

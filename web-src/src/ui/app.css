@@ -28,6 +28,7 @@ code, .mono { font: var(--mono); }
 .kinds { display: flex; gap: var(--space-tight); }
 .kinds a { padding: 6px 12px; border-radius: var(--radius); color: var(--muted); }
 .kinds a.on { color: var(--text); background: var(--raised); }
+.kinds a.off { color: var(--faint); text-decoration: line-through; }
 .kinds a:hover { text-decoration: none; background: var(--hover); color: var(--text); }
 .top .who { margin-left: auto; display: flex; align-items: center; gap: var(--space-gap); color: var(--muted); }
 .lang { display: flex; gap: 2px; }
@@ -194,7 +195,7 @@ ul.problems li { padding: 2px 0; }
 ul.problems a { color: inherit; }
 
 /* the canvases */
-.canvas { position: relative; height: 620px; border: 1px solid var(--edge); border-radius: 6px; overflow: hidden; background: var(--rail); margin-bottom: var(--space-gap); }
+.canvas { position: relative; height: max(560px, calc(100vh - 300px)); border: 1px solid var(--edge); border-radius: 6px; overflow: hidden; background: var(--rail); margin-bottom: var(--space-gap); }
 .canvas .react-flow__background { background: var(--rail); }
 .canvas .react-flow__controls { background: var(--panel); border: 1px solid var(--edge); box-shadow: none; }
 .canvas .react-flow__controls button { background: var(--raised); color: var(--text); border-bottom: 1px solid var(--rule); fill: var(--text); }
@@ -203,21 +204,29 @@ ul.problems a { color: inherit; }
 .canvas .react-flow__node-header { pointer-events: none; }
 .canvas .react-flow__node-header button { pointer-events: auto; }
 .canvas-hint { position: absolute; left: 12px; bottom: 12px; background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius); padding: 6px 10px; max-width: 520px; z-index: 5; }
-.tcard, .tghost, .ccard { background: var(--panel); border: 1px solid var(--edge); border-radius: 6px; padding: 8px 10px; color: var(--text); font: var(--font-small); position: relative; box-sizing: border-box; }
-.tcard .name, .ccard .name { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
-.tcard .id, .tghost .id { color: var(--muted); font: var(--mono); font-size: 11px; display: block; }
-.tcard .cost { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+/* the cards of both canvases: fixed boxes, one line per fact, the rest on hover */
+.tcard, .tghost, .ccard { background: var(--panel); border: 1px solid var(--edge); border-radius: 6px; padding: 8px 12px; color: var(--text); font: 13px/1.35 system-ui, "Segoe UI", Roboto, sans-serif; position: relative; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; gap: 3px; }
+.tcard .name, .ccard .name, .tghost .name { font-weight: 600; font-size: 15px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 28px; }
+.tcard .id, .tghost .id { color: var(--muted); font: 11px/1.3 ui-monospace, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tcard .cost { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; max-height: 40px; overflow: hidden; }
+.chip { display: inline-block; padding: 1px 7px; border-radius: 9px; font: 11px/1.4 ui-monospace, Consolas, monospace; background: var(--raised); color: var(--text); border: 1px solid var(--rule); white-space: nowrap; }
+.chip.accent { color: var(--accent); border-color: var(--accent); background: transparent; }
+.chip.faint { color: var(--faint); }
+.ccard .line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+.ccard .line.mono { font-family: ui-monospace, Consolas, monospace; }
+.ccard .arrow { display: inline-block; width: 16px; color: var(--accent); }
 .tcard.pick, .ccard.pick { border-color: var(--accent); box-shadow: 0 0 0 2px var(--pick); }
 .tcard.bad, .ccard.bad { border-color: var(--bad); }
-.tcard .alarm, .ccard .alarm { position: absolute; top: 6px; right: 8px; color: var(--bad); font-weight: 700; }
+.tcard .alarm, .ccard .alarm { position: absolute; top: 6px; right: 10px; color: var(--bad); font-weight: 700; }
 .tghost { border-style: dashed; color: var(--muted); }
 .ccard.off { opacity: 0.55; border-style: dashed; }
-.theader { display: flex; align-items: center; gap: 8px; color: var(--faint); font: var(--font-small); text-transform: uppercase; letter-spacing: 0.06em; width: 220px; }
-.tedge { stroke: var(--edge); stroke-width: 2; }
+.theader { display: flex; align-items: center; gap: 8px; color: var(--muted); font: 13px/1.3 system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.08em; width: 236px; }
+.tedge { stroke: var(--accent); stroke-width: 2; opacity: 0.7; }
 .tedge.cross { stroke-dasharray: 6 4; }
 .tedge.pick { stroke: var(--bad); stroke-dasharray: 3 3; }
 .tedge-hit { stroke: transparent; stroke-width: 14; cursor: pointer; }
-.canvas .react-flow__edge-path { stroke: var(--edge); stroke-width: 1.5; }
+.canvas .react-flow__edge-path { stroke: var(--accent); stroke-width: 2; opacity: 0.7; }
+.canvas .react-flow__arrowhead path, .canvas .react-flow__edge marker path { fill: var(--accent); stroke: var(--accent); }
 .canvas .react-flow__edge-textbg { fill: var(--panel); }
 .canvas .react-flow__edge-text { fill: var(--muted); font-size: 11px; }
 .canvas .react-flow__edge.selected .react-flow__edge-path { stroke: var(--accent); }

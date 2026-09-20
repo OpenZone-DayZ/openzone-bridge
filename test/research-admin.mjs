@@ -123,6 +123,16 @@ ok('classes reads the dump', admin.classes().count, 3);
 ok('events name the admin', admin.events({ limit: 3 }).events.map((e) => [e.kind, e.admin]), [['admin_respawn', 'tester'], ['admin_reload', 'tester'], ['admin_complete', 'tester']]);
 ok('status carries the kind\'s facts', [admin.status().configured, admin.status().classes, admin.status().unanswered], [true, 3, 8]);
 
+console.log('the class index');
+
+ok('no index yet', admin.classindex(), { ok: true, index: null, at: '' });
+ok('a broken index is refused', [admin.classindexput({ index: { v: 3 }, admin: 'tester' }).why, admin.classindexput({ index: { v: 3, mods: [], classes: [['x']] }, admin: 'tester' }).why], ['not a class index', 'a broken class row']);
+const idx = { v: 3, generated: '2026-09-20', mods: ['vanilla'], classes: [['Apple', -1, 0, 0, 'Apple', 'Apple']] };
+ok('an index is stored and counted', admin.classindexput({ index: idx, admin: 'tester' }), { ok: true, classes: 1, mods: 1 });
+ok('and answered whole, with when', [admin.classindex().index.classes.length, admin.classindex().at !== ''], [1, true]);
+ok('as text too', admin.classindexput({ index: JSON.stringify(idx), admin: 'tester' }).ok, true);
+ok('the journal names it', admin.events({ limit: 1 }).events[0].kind, 'admin_classindex');
+
 console.log('admin ops without a directory');
 
 const offAdmin = researchAdmin({ store: s, xchg: null, push: (o) => pushed.push(o) });

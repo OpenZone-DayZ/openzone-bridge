@@ -108,12 +108,12 @@ describe('tree canvas', () => {
   it('lays columns by tier and draws a ghost for a parent in another branch', () => {
     const m = buildTreeCanvas(doc, 0);
     expect(m.tiers).toEqual([1, 2, 3]);
-    expect(m.cards.map((c) => [c.node.Id, c.x, c.y])).toEqual([['r', 0, 48], ['c', 290, 48]]);
-    expect(m.ghosts.map((g) => [g.id, g.branchLabel, g.x, g.y])).toEqual([['x', 'B', 0, 168]]);
+    expect(m.cards.map((c) => [c.node.Id, c.x, c.y])).toEqual([['r', 0, 52], ['c', 316, 52]]);
+    expect(m.ghosts.map((g) => [g.id, g.branchLabel, g.x, g.y])).toEqual([['x', 'B', 0, 184]]);
     expect(m.edges.map((e) => [e.source, e.target, e.cross])).toEqual([['n:0:0', 'n:0:1', false], ['g:x', 'n:0:1', true]]);
   });
   it('maps a dragged x back to a tier and caps absurd tiers', () => {
-    expect(tierForX(300, [1, 2, 3])).toBe(2);
+    expect(tierForX(330, [1, 2, 3])).toBe(2);
     expect(tierForX(-100, [1, 2, 3])).toBe(1);
     expect(columnTiers([1, 99999]).length).toBe(3);
   });

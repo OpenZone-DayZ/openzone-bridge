@@ -205,8 +205,13 @@ try {
   ok('the restart kept the versions', (await admin('history', { name: 'ResearchOwners' })).versions.length, 5);
   await call('/v1/research/boot', { Revision: 5, Counters: 'owners=1', Names: NAMES });
   ok('a boot after the restart is answered and the swept refused candidate stays', [(await admin('status')).booted.length, candidates()], [1, [newer.file]]);
+  // The kinds a server runs, kept across the bridge's restart: research
+  // booted since the server's start, storage never.
+  const srv = (await admin('servers')).servers.find((x) => x.id === 'research-test');
+  ok('the server list says which kinds booted since the start', [srv.since !== '', Object.keys(srv.kinds)], [true, ['research']]);
   await call('/v1/research/result', { Token: reload.token, Ok: true, Note: '' });
   ok('a fresh game gets the unanswered mail again, no hello', (await poll(true)), []);
+  ok('a fresh poll forgets the kinds until they boot again', Object.keys((await admin('servers')).servers.find((x) => x.id === 'research-test').kinds), []);
   const events = (await admin('events', { limit: 100 })).events.map((e) => e.kind);
   ok('the journal saw it all', ['boot', 'admin_save', 'changed', 'result', 'admin_grant', 'admin_reload'].every((k) => events.includes(k)), true);
 } catch (e) {

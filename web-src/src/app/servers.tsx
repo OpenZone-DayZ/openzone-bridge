@@ -6,10 +6,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, currentServer, setCurrentServer } from '../api/client';
 
-export type ServerInfo = { id: string; at: string };
-type Servers = { servers: ServerInfo[]; current: string; choose: (id: string) => void; refresh: () => void };
+// `since`: when the server last started (its Fresh poll); `kinds`: when each
+// kind booted on it since then. A kind missing here is a mod the server
+// does not run, and the site blocks its section.
+export type ServerInfo = { id: string; at: string; since?: string; kinds?: Record<string, string> };
+type Servers = { servers: ServerInfo[]; current: string; choose: (id: string) => void; refresh: () => void; blocked: (kind: string) => ServerInfo | null };
 
-const ServersContext = createContext<Servers>({ servers: [], current: '', choose: () => {}, refresh: () => {} });
+const ServersContext = createContext<Servers>({ servers: [], current: '', choose: () => {}, refresh: () => {}, blocked: () => null });
 
 export function ServersProvider({ children }: { children: ReactNode }) {
   const [servers, setServers] = useState<ServerInfo[]>([]);
@@ -43,7 +46,21 @@ export function ServersProvider({ children }: { children: ReactNode }) {
     setCurrentServer(id);
     setCurrent(id);
   }, []);
-  const value = useMemo(() => ({ servers, current, choose, refresh }), [servers, current, choose, refresh]);
+  // A kind is blocked when the chosen server started (the bridge saw its
+  // Fresh poll), that kind never booted since, and the server had half a
+  // minute to do so: a mod that is not loaded never boots.
+  const blocked = useCallback((kind: string): ServerInfo | null => {
+    const srv = servers.find((s) => s.id === current);
+    if (!srv || !srv.since) return null;
+    if (srv.kinds && srv.kinds[kind]) return null;
+    if (Date.now() - Date.parse(srv.since) < 30000) return null;
+    return srv;
+  }, [servers, current]);
+  useEffect(() => {
+    const t = setInterval(refresh, 30000);
+    return () => clearInterval(t);
+  }, [refresh]);
+  const value = useMemo(() => ({ servers, current, choose, refresh, blocked }), [servers, current, choose, refresh, blocked]);
   return <ServersContext.Provider value={value}>{children}</ServersContext.Provider>;
 }
 

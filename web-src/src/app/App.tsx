@@ -7,7 +7,7 @@ import { logout } from '../api/client';
 import { LangContext, rememberLang, rememberedLang, translate, type Key, type Lang } from '../i18n';
 import { href, useRoute, type Route } from './router';
 import { SessionProvider, useSession } from './session';
-import { ServersProvider, useServers } from './servers';
+import { ServersProvider, useServers, type ServerInfo } from './servers';
 import { ToastProvider } from './toasts';
 import { BoxesPage } from '../storage/BoxesPage';
 import { BoxPage } from '../storage/BoxPage';
@@ -15,6 +15,7 @@ import { FindPage, HealthPage, PlayerPage, ShelfPage, StorageJournalPage } from 
 import { MapPage } from '../storage/MapPage';
 import { ConfigsPage, FactionsPage, ResearchJournalPage, StaticsPage } from '../research/pages';
 import { EditorPage } from '../research/editor/EditorPage';
+import { ClassesPage } from '../research/classes/ClassesPage';
 import { JournalPage } from './JournalPage';
 
 export function App() {
@@ -55,6 +56,7 @@ const SIDE: Record<'storage' | 'research', { page: string; key: Key }[]> = {
     { page: 'configs', key: 'nav_configs' },
     { page: 'factions', key: 'nav_factions' },
     { page: 'statics', key: 'nav_statics' },
+    { page: 'classes', key: 'nav_classes' },
     { page: 'journal', key: 'nav_journal' },
   ],
 };
@@ -63,17 +65,18 @@ function Shell() {
   const { s, lang, setLang } = i18nOf();
   const route = useRoute();
   const session = useSession();
-  const { servers, current, choose } = useServers();
+  const { servers, current, choose, blocked } = useServers();
   document.title = s('title');
   const kind = route.kind === 'all' ? null : route.kind;
+  const off = kind ? blocked(kind) : null;
   const gate = session.ready && session.auth && !session.name;
   return (
     <div className="shell">
       <header className="top">
         <a className="brand" href={href('storage', 'boxes')}>{s('title')}</a>
         <nav className="kinds">
-          <a className={route.kind === 'storage' ? 'on' : ''} href={href('storage', 'boxes')}>{s('kind_storage')}</a>
-          <a className={route.kind === 'research' ? 'on' : ''} href={href('research', 'configs')}>{s('kind_research')}</a>
+          <a className={`${route.kind === 'storage' ? 'on' : ''}${blocked('storage') ? ' off' : ''}`} href={href('storage', 'boxes')} title={blocked('storage') ? s('blocked_short', { mod: 'OpenZone_Storage' }) : undefined}>{s('kind_storage')}</a>
+          <a className={`${route.kind === 'research' ? 'on' : ''}${blocked('research') ? ' off' : ''}`} href={href('research', 'configs')} title={blocked('research') ? s('blocked_short', { mod: 'OpenZone_Research' }) : undefined}>{s('kind_research')}</a>
           <a className={route.kind === 'all' ? 'on' : ''} href={href('all', 'journal')}>{s('nav_journal')}</a>
         </nav>
         <div className="who">
@@ -102,7 +105,7 @@ function Shell() {
           </aside>
         )}
         <main>
-          {!session.ready ? <div className="empty">{s('loading')}</div> : gate ? <Gate /> : <Page route={route} />}
+          {!session.ready ? <div className="empty">{s('loading')}</div> : gate ? <Gate /> : off && kind ? <BlockedKind kind={kind} server={off} /> : <Page route={route} />}
         </main>
       </div>
     </div>
@@ -141,6 +144,24 @@ function Who() {
   );
 }
 
+const MOD_OF: Record<string, string> = { storage: 'OpenZone_Storage', research: 'OpenZone_Research' };
+
+// The section of a mod the chosen server does not run: no page, a reason.
+function BlockedKind({ kind, server }: { kind: 'storage' | 'research'; server: ServerInfo }) {
+  const { s } = i18nOf();
+  const { refresh } = useServers();
+  const others = Object.entries(server.kinds || {}).map(([k, at]) => `${MOD_OF[k] || k} (${at.slice(0, 19).replace('T', ' ')})`);
+  return (
+    <div className="gate">
+      <h1>{s(kind === 'storage' ? 'kind_storage' : 'kind_research')}</h1>
+      <p className="alert">{s('blocked_title', { mod: MOD_OF[kind], server: server.id })}</p>
+      <p className="muted">{s('blocked_text', { since: server.since ? server.since.slice(0, 19).replace('T', ' ') : '?' })}</p>
+      {others.length > 0 && <p className="muted small">{s('blocked_others')}: {others.join(', ')}</p>}
+      <button type="button" onClick={refresh}>{s('blocked_again')}</button>
+    </div>
+  );
+}
+
 function Gate() {
   const { s } = i18nOf();
   return (
@@ -158,6 +179,7 @@ function Page({ route }: { route: Route }): ReactNode {
     if (route.page === 'config' && route.arg) return <EditorPage name={route.arg} />;
     if (route.page === 'factions') return <FactionsPage />;
     if (route.page === 'statics') return <StaticsPage />;
+    if (route.page === 'classes') return <ClassesPage />;
     if (route.page === 'journal') return <ResearchJournalPage />;
     return <ConfigsPage />;
   }

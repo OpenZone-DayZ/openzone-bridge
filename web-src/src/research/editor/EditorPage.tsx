@@ -19,6 +19,7 @@ import {
   type ConfigName, type Doc, type Field, type RowRef,
 } from './schema';
 import { validate, worst, type Problem, type Severity } from './validate';
+import { useClassIndex } from '../classes/useClassIndex';
 
 // The other configs an editor reads for its checks and pickers, fetched
 // once per page and kept for the session.
@@ -67,7 +68,8 @@ const summarize = (o: Doc): string => {
 type Tab = 'table' | 'canvas' | 'balance' | 'text' | 'history';
 
 export function EditorPage({ name }: { name: string }) {
-  const { s } = useLang();
+  const { s, lang } = useLang();
+  const held = useClassIndex();
   const toast = useToast();
   const [loaded, setLoaded] = useState<{ current: ConfigText; history: ConfigVersion[] } | null>(null);
   const [why, setWhy] = useState('');
@@ -125,12 +127,20 @@ export function EditorPage({ name }: { name: string }) {
   const pointTypesDoc = cfgName === 'ResearchPointTypes' ? doc : others.ResearchPointTypes ?? null;
   const treeDoc = cfgName === 'ResearchTree' ? doc : others.ResearchTree ?? null;
   const ownersDoc = cfgName === 'ResearchOwners' ? doc : others.ResearchOwners ?? null;
+  // Existence: the server's own list from its last boot, and the index the
+  // admin imported; a class in either is a class.
+  const known = useMemo(() => {
+    if (!classes && !held.index) return null;
+    const set = new Set<string>(classes ? [...classes] : []);
+    if (held.index) for (const row of held.index.classes) set.add(row[0]);
+    return set;
+  }, [classes, held.index]);
   const ctx = useMemo(() => ({
-    classes,
+    classes: known,
     pointTypes: pointTypesDoc ? new Set((pointTypesDoc.PointTypes as Doc[]).map((p) => String(p.Id))) : undefined,
     nodeIds: treeDoc ? new Set((treeDoc.Branches as Doc[]).flatMap((b) => (b.Nodes as Doc[]).map((n) => String(n.Id)))) : undefined,
     owners: ownersDoc ? new Set((ownersDoc.Owners as Doc[]).map((o) => String(o.Id))) : undefined,
-  }), [classes, pointTypesDoc, treeDoc, ownersDoc]);
+  }), [known, pointTypesDoc, treeDoc, ownersDoc]);
   const problems = useMemo(() => (doc && cfgName ? validate(cfgName, doc, ctx) : []), [doc, cfgName, ctx]);
   const suggest = useMemo<Suggest>(() => ({
     classes: classes ? [...classes] : [],
@@ -138,7 +148,9 @@ export function EditorPage({ name }: { name: string }) {
     nodeIds: ctx.nodeIds ? [...ctx.nodeIds] : [],
     owners: ctx.owners ? [...ctx.owners] : [],
     devices: ownersDoc ? [...new Set((ownersDoc.Owners as Doc[]).flatMap((o) => [...(o.DeviceClasses as string[]), ...(o.TerminalClasses as string[])]))] : [],
-  }), [classes, ctx, ownersDoc]);
+    index: held.index,
+    lang,
+  }), [classes, ctx, ownersDoc, held.index, lang]);
   const pointNames = useMemo(() => new Map((pointTypesDoc ? (pointTypesDoc.PointTypes as Doc[]) : []).map((p) => [String(p.Id), String(p.Name)])), [pointTypesDoc]);
 
   const dirty = doc !== null && base !== null && serialize(cfgName || 'ResearchSettings', doc) !== serialize(cfgName || 'ResearchSettings', base);
@@ -181,8 +193,8 @@ export function EditorPage({ name }: { name: string }) {
           {shownVersion !== loaded.current.version && <Badge tone="alert">{s('e_view_version', { v: shownVersion })}</Badge>}
           {dirty && <Badge tone="alert">{s('e_dirty')}</Badge>}
           <span className={counts.drop ? 'bad' : counts.disable ? 'alert' : counts.warn ? 'muted' : 'ok'}>{problems.length ? problemText : s('e_no_problems')}</span>
-          {!classes && <span className="muted small">{s('e_loading_classes')}</span>}
-          {classes && classes.size === 0 && <span className="muted small">{s('e_no_classes')}</span>}
+          {!known && <span className="muted small">{s('e_loading_classes')}</span>}
+          {known && known.size === 0 && <span className="muted small">{s('e_no_classes')}</span>}
           <span className="grow" />
           {dirty && <button type="button" className="ghost" onClick={() => { setDoc(base); setText(serialize(cfgName, base!)); }}>{s('e_discard')}</button>}
           <Confirm primary disabled={!dirty && shownVersion === loaded.current.version} label={s('e_send')}
@@ -202,7 +214,7 @@ export function EditorPage({ name }: { name: string }) {
         <TreeTab doc={doc} onChange={change} selected={selected} setSelected={(p) => { setSelected(p); setGroup(p[0]); }} problems={problems} pointNames={pointNames} group={group ?? 0} setGroup={setGroup} />
       )}
       {tab === 'canvas' && cfgName === 'ResearchRules' && (
-        <ChainCanvas doc={doc} selected={selected} onSelect={(p) => { setSelected(p); setGroup(p[0]); setTab('table'); }} />
+        <ChainCanvas doc={doc} selected={selected} onSelect={(p) => { setSelected(p); setGroup(p[0]); setTab('table'); }} index={held.index} lang={lang} />
       )}
       {tab === 'balance' && <BalanceTab tree={doc} others={others} pointTypes={pointTypesDoc} />}
 
@@ -407,7 +419,7 @@ function TreeTab({ doc, onChange, selected, setSelected, problems, pointNames, g
       />
       {selected && branches[selected[0]] && (branches[selected[0]].Nodes as Doc[])[selected[1]] && (
         <Panel tight>
-          <RowForm fields={rowFields('ResearchTree')} row={node(selected)} onChange={(row) => onChange(withRow('ResearchTree', doc, selected, row))} suggest={{ classes: [], pointTypes: [...pointNames.keys()], nodeIds: rowsOf('ResearchTree', doc).map((r) => String(r.row.Id)), owners: [], devices: [] }}
+          <RowForm fields={rowFields('ResearchTree')} row={node(selected)} onChange={(row) => onChange(withRow('ResearchTree', doc, selected, row))} suggest={{ classes: [], pointTypes: [...pointNames.keys()], nodeIds: rowsOf('ResearchTree', doc).map((r) => String(r.row.Id)), owners: [], devices: [], index: null, lang: 'uk' }}
             title={<span className="mono">{String(node(selected).Id)}</span>} onDelete={() => onChange(withRow('ResearchTree', doc, selected, null))} />
         </Panel>
       )}

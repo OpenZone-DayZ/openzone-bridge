@@ -49,6 +49,11 @@ const DDL = [
      answer      TEXT NOT NULL DEFAULT '',
      answered_at TEXT NOT NULL DEFAULT ''
    )`,
+  `CREATE TABLE IF NOT EXISTS research_meta (
+     key   TEXT PRIMARY KEY,
+     value TEXT NOT NULL,
+     at    TEXT NOT NULL
+   )`,
   `CREATE TABLE IF NOT EXISTS research_events (
      id        INTEGER PRIMARY KEY AUTOINCREMENT,
      at        TEXT NOT NULL,
@@ -125,6 +130,9 @@ export class ResearchStore {
       evIns: q('INSERT INTO research_events(at, kind, note, server_id, admin, name, token) VALUES (?, ?, ?, ?, ?, ?, ?)'),
       evList: q("SELECT * FROM research_events WHERE (? = '' OR server_id = ? OR server_id = '') ORDER BY id DESC LIMIT ?"),
       evOld: q('DELETE FROM research_events WHERE at < ?'),
+
+      metaGet: q('SELECT value, at FROM research_meta WHERE key = ?'),
+      metaSet: q('INSERT INTO research_meta(key, value, at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, at = excluded.at'),
     };
   }
 
@@ -234,6 +242,16 @@ export class ResearchStore {
 
   commands(limit = 100) {
     return this.q.cmdRecent.all(Math.max(1, Math.min(1000, Math.trunc(Number(limit)) || 100))).map(withArgs);
+  }
+
+  // ---------- named blobs: the class index the admin imported ----------
+
+  metaGet(key) {
+    return this.q.metaGet.get(key) || null;
+  }
+
+  metaSet(key, value, at = stampNow()) {
+    this.q.metaSet.run(key, String(value), at);
   }
 
   // ---------- journal ----------

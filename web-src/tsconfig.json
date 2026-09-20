@@ -12,7 +12,8 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["vite/client"]
+    "allowImportingTsExtensions": true,
+    "types": ["vite/client", "@types/wicg-file-system-access"]
   },
   "include": ["src", "vite.config.ts"]
 }

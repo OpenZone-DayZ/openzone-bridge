@@ -10,26 +10,29 @@ import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js';
 import { useLang } from '../../i18n';
 import type { Doc } from './schema';
 import { buildChain, type ChainGraph, type RuleRef } from './chain';
+import { displayNameOf, isKindOf, type ClassIndex, type Lang } from '../classes/classIndex';
 
-const W = 240;
-const H = 96;
+const W = 300;
+const H = 116;
 const elk = new ELK();
 
-type RuleNode = Node<{ ref: RuleRef; breaks: number }, 'rule'>;
+type RuleNode = Node<{ ref: RuleRef; breaks: number; name: (cls: string) => string }, 'rule'>;
 
 function RuleView({ data, selected }: NodeProps<RuleNode>) {
   const r = data.ref.rule;
   const input = (r.InputItem || {}) as Doc;
   const outputs = (Array.isArray(r.Outputs) ? r.Outputs : []) as Doc[];
   const off = r.Enabled === false;
+  const nm = data.name;
   return (
-    <div className={`ccard${off ? ' off' : ''}${data.breaks ? ' bad' : ''}${selected ? ' pick' : ''}`} style={{ width: W, minHeight: H }} title={String(r.Id)}>
+    <div className={`ccard${off ? ' off' : ''}${data.breaks ? ' bad' : ''}${selected ? ' pick' : ''}`} style={{ width: W, height: H }} title={`${String(r.Id)}\n${String(r.Device)} · ${String(r.TimeSec)}s\n← ${String(input.Classname)}${input.Content ? ` (${String(input.Content)})` : ''}${outputs.map((o) => `\n→ ${String(o.Classname)}${o.Content ? ` (${String(o.Content)})` : ''}`).join('')}`}>
       <Handle type="target" position={Position.Left} />
       <Handle type="source" position={Position.Right} />
       <div className="name">{String(r.Id)}</div>
-      <div className="small muted mono">{String(r.Device)} · {String(r.TimeSec)}s</div>
-      <div className="small mono">← {String(input.Classname)}{input.Content ? ` (${String(input.Content)})` : ''}</div>
-      {outputs.map((o, i) => <div key={i} className="small mono">→ {String(o.Classname)}{o.Content ? ` (${String(o.Content)})` : ''}</div>)}
+      <div className="line muted">{String(r.Device)} · {String(r.TimeSec)}s</div>
+      <div className="line"><span className="arrow">←</span>{nm(String(input.Classname))}{input.Content ? <span className="muted"> ({String(input.Content)})</span> : null}</div>
+      {outputs.slice(0, 2).map((o, i) => <div key={i} className="line"><span className="arrow">→</span>{nm(String(o.Classname))}{o.Content ? <span className="muted"> ({String(o.Content)})</span> : null}</div>)}
+      {outputs.length > 2 && <div className="line muted">… +{outputs.length - 2}</div>}
       {data.breaks > 0 && <span className="alarm">!{data.breaks}</span>}
     </div>
   );
@@ -40,7 +43,18 @@ const nodeTypes = { rule: RuleView };
 async function layout(graph: ChainGraph): Promise<Map<string, { x: number; y: number }>> {
   const g: ElkNode = {
     id: 'root',
-    layoutOptions: { 'elk.algorithm': 'layered', 'elk.direction': 'RIGHT', 'elk.spacing.nodeNode': '40', 'elk.layered.spacing.nodeNodeBetweenLayers': '90' },
+    layoutOptions: {
+      'elk.algorithm': 'layered',
+      'elk.direction': 'RIGHT',
+      'elk.spacing.nodeNode': '36',
+      'elk.layered.spacing.nodeNodeBetweenLayers': '90',
+      'elk.spacing.componentComponent': '48',
+      // The file's order decides what lands first; the components pack wide,
+      // not square, so a page of short chains reads top to bottom.
+      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+      'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+      'elk.aspectRatio': '2.2',
+    },
     children: graph.nodes.map((n) => ({ id: n.key, width: W, height: H })),
     edges: graph.edges.map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
   };
@@ -50,9 +64,11 @@ async function layout(graph: ChainGraph): Promise<Map<string, { x: number; y: nu
   return pos;
 }
 
-export function ChainCanvas({ doc, selected, onSelect }: { doc: Doc; selected: number[] | null; onSelect: (path: number[]) => void }) {
+export function ChainCanvas({ doc, selected, onSelect, index, lang }: { doc: Doc; selected: number[] | null; onSelect: (path: number[]) => void; index: ClassIndex | null; lang: Lang }) {
   const { s } = useLang();
-  const graph = useMemo(() => buildChain(doc), [doc]);
+  const kindOf = useMemo(() => (index ? (a: string, b: string) => isKindOf(index, a, b) : undefined), [index]);
+  const name = useMemo(() => (index ? (cls: string) => displayNameOf(index, cls.replace(/\|.*$/, ''), lang) : (cls: string) => cls), [index, lang]);
+  const graph = useMemo(() => buildChain(doc, kindOf), [doc, kindOf]);
   const [pos, setPos] = useState<Map<string, { x: number; y: number }>>(new Map());
   useEffect(() => {
     let alive = true;
@@ -70,11 +86,13 @@ export function ChainCanvas({ doc, selected, onSelect }: { doc: Doc; selected: n
   }, [graph]);
   const selectedKey = selected ? `r:${selected.join(':')}` : '';
   const nodes = useMemo<RuleNode[]>(() => graph.nodes.map((n, i) => ({
-    id: n.key, type: 'rule', position: pos.get(n.key) || { x: (i % 4) * (W + 40), y: Math.floor(i / 4) * (H + 40) }, data: { ref: n, breaks: breaksOf.get(n.key) || 0 }, selected: n.key === selectedKey,
-  })), [graph, pos, breaksOf, selectedKey]);
+    id: n.key, type: 'rule', position: pos.get(n.key) || { x: (i % 4) * (W + 40), y: Math.floor(i / 4) * (H + 40) }, data: { ref: n, breaks: breaksOf.get(n.key) || 0, name }, selected: n.key === selectedKey,
+  })), [graph, pos, breaksOf, selectedKey, name]);
+  // No label on the wire: the cards already name what flows (the source's
+  // output, the target's input), and a label between two cards this close
+  // lands on top of one of them.
   const edges = useMemo<Edge[]>(() => graph.edges.map((e) => ({
-    id: e.id, source: e.source, target: e.target, label: e.content ? `${e.classname} (${e.content})` : e.classname, type: 'smoothstep',
-    markerEnd: { type: MarkerType.ArrowClosed }, className: 'cedge', labelBgPadding: [4, 2], labelClassName: 'cedge-label',
+    id: e.id, source: e.source, target: e.target, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed }, className: 'cedge',
   })), [graph]);
   const byKey = useMemo(() => new Map(graph.nodes.map((n) => [n.key, n])), [graph]);
   return (
@@ -84,6 +102,7 @@ export function ChainCanvas({ doc, selected, onSelect }: { doc: Doc; selected: n
         edges={edges}
         nodeTypes={nodeTypes}
         fitView
+        fitViewOptions={{ padding: 0.05, minZoom: 0.85, maxZoom: 1 }}
         minZoom={0.1}
         deleteKeyCode={null}
         nodesConnectable={false}
