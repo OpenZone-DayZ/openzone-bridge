@@ -23,6 +23,10 @@ import { storageAdmin } from './storage-admin.js';
 import { runKeep } from './storage-keep.js';
 import { storageAuth } from './storage-auth.js';
 import { storageWeb } from './storage-web.js';
+import { ResearchStore } from './research-store.js';
+import { ResearchXchg } from './research-xchg.js';
+import { researchRoutes } from './research-routes.js';
+import { researchAdmin } from './research-admin.js';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './history.js';
@@ -112,6 +116,14 @@ const cfg = {
   storageXchgDir: process.env.STORAGE_XCHG_DIR || '',
   storageKeepVersionsDays: days('STORAGE_KEEP_VERSIONS_DAYS', 14),
   storageKeepEventsDays: days('STORAGE_KEEP_EVENTS_DAYS', 90),
+  // Research configs (design 2026-09-20). RESEARCH_DIR is the game server's
+  // $profile:OpenZone; the exchange directory is research/xchg under it
+  // unless RESEARCH_XCHG_DIR says otherwise. Unset, the research routes
+  // refuse and the game keeps retrying its boot letter, quietly.
+  researchDir: process.env.RESEARCH_DIR || '',
+  researchXchgDir: process.env.RESEARCH_XCHG_DIR || '',
+  researchKeepVersionsDays: days('RESEARCH_KEEP_VERSIONS_DAYS', 30),
+  researchKeepEventsDays: days('RESEARCH_KEEP_EVENTS_DAYS', 90),
   // The storage admin web (design section 15): its own port on loopback,
   // 0 = off; ADMIN_URL is the page's outside address and turns Discord
   // sign-in on, which then needs the client secret.
@@ -174,6 +186,35 @@ const storageHealth = () => ({
   keep: storage.keepPreview({ versionsDays: cfg.storageKeepVersionsDays, eventsDays: cfg.storageKeepEventsDays }),
 });
 const storageAdminOps = storageAdmin({ store: storage, xchg, push: storagePush, health: storageHealth });
+
+// Research: the same shape as storage -- a bad or missing directory turns
+// the kind off with one line and never the bridge.
+const research = new ResearchStore(store);
+let researchXchg = null;
+if (cfg.researchDir) {
+  try {
+    researchXchg = new ResearchXchg(cfg.researchDir, cfg.researchXchgDir);
+    const swept = researchXchg.sweep(research.keepTokens());
+    console.log(`[research] ${cfg.researchDir} ready${swept.length ? `, swept ${swept.length} file(s)` : ''}`);
+  } catch (e) {
+    researchXchg = null;
+    console.error(`[research] RESEARCH_DIR is not usable (${e.code || e.message}): research routes refuse until it is`);
+  }
+} else {
+  console.log('[research] RESEARCH_DIR is not set: research routes refuse, the game keeps its configs to itself');
+}
+const researchPush = (obj) => {
+  queuePush(null, obj, 'research');
+  http?.wake();
+};
+const researchStatus = () => ({
+  booted: researchRoutesSide.booted(),
+  classes: researchRoutesSide.classes().count,
+  servers: [...lastPoll].map(([id, at]) => ({ id, at })),
+  keep: research.keepPreview({ versionsDays: cfg.researchKeepVersionsDays, eventsDays: cfg.researchKeepEventsDays }),
+});
+const researchAdminOps = researchAdmin({ store: research, xchg: researchXchg, push: researchPush, status: researchStatus });
+const researchRoutesSide = researchRoutes({ store: research, xchg: researchXchg, admin: researchAdminOps });
 
 // OUR OWN ID FOR A RECORD, and it is deliberately not Discord's (TZ-2 R6.4).
 //
@@ -473,6 +514,7 @@ async function pairFreeze(a, b, frozen) {
 
 const routes = {
   ...storageRoutes({ store: storage, xchg, admin: storageAdminOps }),
+  ...researchRoutesSide.routes,
 
   // --- chat ---
 
@@ -1542,6 +1584,11 @@ function drain({ ServerId, Cursor, Uids, Fresh, Mirrors, AdminIds }) {
   }
   pushSeen.set(ServerId, pushSeq);
 
+  // Research mail that must reach THIS server outside the shared queue: a
+  // server's first poll skips the queue, so unanswered commands and the
+  // boot request ride here (research-routes.js, poll).
+  for (const it of researchRoutesSide.poll(String(ServerId || ''), !!Fresh)) items.push(it);
+
   // The roster, but ONLY when it changed for this server.
   //
   // Two kilobytes seven times a minute for data that changes once a month
@@ -1799,6 +1846,14 @@ async function main() {
       runKeep(storage, cfg);
     } catch (e) {
       console.warn(`[storage] keep failed: ${e.message}`);
+    }
+    try {
+      const r = research.keep({ versionsDays: cfg.researchKeepVersionsDays, eventsDays: cfg.researchKeepEventsDays });
+      if (r.versions || r.blobs || r.events || r.commands) {
+        console.log(`[research] keep: ${r.versions} version(s), ${r.blobs} blob(s), ${r.events} event(s), ${r.commands} command(s) removed`);
+      }
+    } catch (e) {
+      console.warn(`[research] keep failed: ${e.message}`);
     }
   };
   keep();
