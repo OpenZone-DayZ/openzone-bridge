@@ -132,6 +132,18 @@ export class ResearchXchg {
     return out;
   }
 
+  // The spawner's own state: which static entries it has placed.
+  readStaticsState() {
+    const p = join(this.dir, 'OZ_Research_Statics_State.json');
+    if (!existsSync(p)) return { spawned: [] };
+    try {
+      const j = JSON.parse(strip(readFileSync(p, 'utf8')));
+      return { spawned: (Array.isArray(j.SpawnedIds) ? j.SpawnedIds : []).map(String) };
+    } catch {
+      return { spawned: [] };
+    }
+  }
+
   // The class list the game dumps at boot: one CfgVehicles name per line.
   readClasses() {
     const p = join(this.xchgDir, CLASSES_FILE);

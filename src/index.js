@@ -22,12 +22,12 @@ import { storageRoutes } from './storage-routes.js';
 import { storageAdmin } from './storage-admin.js';
 import { runKeep } from './storage-keep.js';
 import { storageAuth } from './storage-auth.js';
-import { storageWeb } from './storage-web.js';
+import { adminWeb } from './admin-web.js';
 import { ResearchStore } from './research-store.js';
 import { ResearchXchg } from './research-xchg.js';
 import { researchRoutes } from './research-routes.js';
 import { researchAdmin } from './research-admin.js';
-import { statSync } from 'node:fs';
+import { statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './history.js';
 import { fillMirror } from './mirror.js';
@@ -129,6 +129,10 @@ const cfg = {
   // sign-in on, which then needs the client secret.
   adminPort: Number(process.env.ADMIN_PORT ?? 8788) || 0,
   adminUrl: String(process.env.ADMIN_URL || '').trim().replace(/\/+$/, ''),
+  // The map page of the admin site: the world's size in metres (the
+  // coordinate grid) and, optionally, a map image to draw under it.
+  adminMapImage: String(process.env.ADMIN_MAP_IMAGE || '').trim(),
+  adminMapSize: Number(process.env.ADMIN_MAP_SIZE) || 15360,
   oauthSecret: String(process.env.DISCORD_CLIENT_SECRET || '').trim(),
 };
 
@@ -184,6 +188,7 @@ const storageHealth = () => ({
   dbBytes: dbBytes(cfg.dbPath),
   servers: [...lastPoll].map(([id, at]) => ({ id, at })),
   keep: storage.keepPreview({ versionsDays: cfg.storageKeepVersionsDays, eventsDays: cfg.storageKeepEventsDays }),
+  map: { size: cfg.adminMapSize, image: !!cfg.adminMapImage && existsSync(cfg.adminMapImage) },
 });
 const storageAdminOps = storageAdmin({ store: storage, xchg, push: storagePush, health: storageHealth });
 
@@ -1824,9 +1829,10 @@ async function main() {
     }
     if (webUp) {
       try {
-        web = storageWeb({
-          ops: storageAdminOps,
-          dir: join(HOME, 'web'),
+        web = adminWeb({
+          kinds: { storage: storageAdminOps, research: researchAdminOps },
+          dir: join(HOME, 'web', 'dist'),
+          mapImage: cfg.adminMapImage,
           allowedHosts: hostOfUrl ? [hostOfUrl] : [],
           auth,
         });

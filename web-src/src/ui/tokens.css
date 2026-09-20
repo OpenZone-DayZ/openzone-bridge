@@ -1,0 +1,34 @@
+/* The series palette (openzone-core/ui/tokens.json, 2026-09-04 section
+   3.8): steel and cold light, orange only for attention. The RGBA floats
+   of the game's tokens, rounded to hex. */
+:root {
+  --screen: #0e1318;
+  --panel: #1a222b;
+  --raised: #222e39;
+  --edge: #384d61;
+  --text: #e6edf2;
+  --muted: #94a6b5;
+  --faint: #5e7385;
+  --accent: #4fb5e8;
+  --alert: #f08a24;
+  --ok: #63c25c;
+  --bad: #e05252;
+  --rule: rgba(255, 255, 255, 0.08);
+  --pick: rgba(79, 181, 232, 0.18);
+  --hover: rgba(79, 181, 232, 0.10);
+  --rail: #0b1015;
+  --dim: rgba(0, 0, 0, 0.55);
+
+  --space-page: 20px;
+  --space-column: 20px;
+  --space-gap: 10px;
+  --space-tight: 6px;
+  --size-button: 30px;
+  --size-field: 28px;
+  --size-header: 34px;
+
+  --font: 15px/1.45 system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-small: 13px/1.4 system-ui, "Segoe UI", Roboto, sans-serif;
+  --mono: 13px/1.4 ui-monospace, Consolas, "Cascadia Mono", monospace;
+  --radius: 4px;
+}

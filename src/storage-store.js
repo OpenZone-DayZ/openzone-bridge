@@ -168,6 +168,7 @@ export class StorageStore {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
       evOfBox: q('SELECT * FROM storage_events WHERE box_id = ? ORDER BY id DESC LIMIT ?'),
       evOfUid: q('SELECT * FROM storage_events WHERE uid = ? ORDER BY id DESC LIMIT ?'),
+      evAdmin: q("SELECT * FROM storage_events WHERE admin != '' ORDER BY id DESC LIMIT ?"),
       evOld: q('DELETE FROM storage_events WHERE at < ?'),
       evOldCount: q('SELECT COUNT(*) AS n FROM storage_events WHERE at < ?'),
       evLastTake: q(`SELECT * FROM storage_events WHERE type = ? AND kind = 'take' ORDER BY id DESC LIMIT 1`),
@@ -449,6 +450,10 @@ export class StorageStore {
     return this.q.evOfBox.all(boxId, limit);
   }
 
+  // Every admin action, across boxes: the journal page.
+  journal(limit = 100) {
+    return this.q.evAdmin.all(Math.max(1, Math.min(1000, Math.trunc(Number(limit)) || 100)));
+  }
   eventsBy(uid, limit = 100) {
     return this.q.evOfUid.all(uid, limit);
   }

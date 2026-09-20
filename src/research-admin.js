@@ -162,6 +162,32 @@ export function researchAdmin({ store, xchg, push, status }) {
       return { ok: true, owners: xchg.readStates() };
     },
 
+    // The static entries of the live config, each with whether the game's
+    // spawner has placed it.
+    statics: async () => {
+      if (!xchg) return off;
+      let r;
+      try {
+        r = await xchg.readConfig('ResearchStatics');
+      } catch (e) {
+        return bad(`unreadable: ${e.message}`);
+      }
+      if (!r) return bad('no such file');
+      const entries = JSON.parse(r.text).Entries;
+      const spawned = new Set(xchg.readStaticsState().spawned);
+      return {
+        ok: true,
+        entries: (Array.isArray(entries) ? entries : []).map((e) => ({
+          id: String(e?.Id ?? ''),
+          className: String(e?.ClassName ?? ''),
+          pos: Array.isArray(e?.Pos) ? e.Pos.map(Number) : [],
+          yaw: Number(e?.Yaw) || 0,
+          spawned: spawned.has(String(e?.Id ?? '')),
+        })),
+      };
+    },
+
+    servers: () => ({ ok: true, servers: status ? (status().servers || []) : [] }),
     classes: () => {
       if (!xchg) return off;
       return { ok: true, ...xchg.readClasses() };
