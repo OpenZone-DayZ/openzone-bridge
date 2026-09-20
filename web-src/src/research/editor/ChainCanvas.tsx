@@ -10,7 +10,7 @@ import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js';
 import { useLang } from '../../i18n';
 import type { Doc } from './schema';
 import { buildChain, type ChainGraph, type RuleRef } from './chain';
-import { displayNameOf, isKindOf, type ClassIndex, type Lang } from '../classes/classIndex';
+import { displayNameOf, isKindOf, type ClassIndex, type Lang } from '../../core/classes/classIndex';
 
 const W = 300;
 const H = 116;

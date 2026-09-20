@@ -2,11 +2,12 @@
 // follows. Class names get suggestions from the server's class list;
 // point types, node ids and owners from the other configs.
 
-import { useMemo, useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { useLang } from '../../i18n';
 import { Confirm } from '../../ui/bits';
 import { blank, type Doc, type Field } from './schema';
-import { searchClasses, type ClassIndex, type Lang } from '../classes/classIndex';
+import { SuggestInput } from '../../ui/SuggestInput';
+import type { ClassIndex, Lang } from '../../core/classes/classIndex';
 
 export type Suggest = {
   classes: string[];
@@ -36,40 +37,6 @@ function suggestionsFor(key: string, suggest: Suggest): string[] {
 
 // An input with a short list of matches under it: the class list holds
 // eleven thousand names, so a datalist would be a wall.
-type Match = { value: string; note: string };
-
-export function SuggestInput({ value, onChange, options, mono = true, size, index, lang }: { value: string; onChange: (v: string) => void; options: string[]; mono?: boolean; size?: number; index?: ClassIndex | null; lang?: Lang }) {
-  const [open, setOpen] = useState(false);
-  const needle = value.trim().toLowerCase();
-  const matches = useMemo<Match[]>(() => {
-    if (!open) return [];
-    // The class index answers by class name and by game name, live; a plain
-    // list answers by prefix, then by substring.
-    if (index) {
-      const bare = needle.replace(/\|.*$/, '');
-      if (bare === '') return [];
-      return searchClasses(index, bare, 14, lang || 'uk').filter((h) => h.name !== value).map((h) => ({ value: h.name, note: h.display && h.display !== h.name ? h.display : '' }));
-    }
-    if (!options.length) return [];
-    const starts = options.filter((o) => o.toLowerCase().startsWith(needle));
-    const holds = needle.length >= 2 ? options.filter((o) => !o.toLowerCase().startsWith(needle) && o.toLowerCase().includes(needle)) : [];
-    return [...starts, ...holds].filter((o) => o !== value).slice(0, 12).map((o) => ({ value: o, note: '' }));
-  }, [open, options, needle, value, index, lang]);
-  return (
-    <span className="suggest">
-      <input className={mono ? 'mono' : ''} value={value} size={size} onChange={(e) => onChange(e.target.value)} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} />
-      {matches.length > 0 && (
-        <span className="suggest-list">
-          {matches.map((m) => (
-            <span key={m.value} className="suggest-item" onMouseDown={(e) => { e.preventDefault(); onChange(m.value); setOpen(false); }}>
-              <span className="mono">{m.value}</span>{m.note && <span className="muted"> · {m.note}</span>}
-            </span>
-          ))}
-        </span>
-      )}
-    </span>
-  );
-}
 
 export function FieldEditor({ field, value, onChange, suggest, label }: { field: Field; value: unknown; onChange: (v: unknown) => void; suggest: Suggest; label?: ReactNode }) {
   const { s } = useLang();

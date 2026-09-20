@@ -208,6 +208,7 @@ route refuses and the game keeps its configs to itself (the VPP editor still wor
 | `RESEARCH_XCHG_DIR` | `<RESEARCH_DIR>/research/xchg` | the exchange directory, when it is elsewhere |
 | `RESEARCH_KEEP_VERSIONS_DAYS` | 30 | versions older than this go, except each config's current one and any pending candidate |
 | `RESEARCH_KEEP_EVENTS_DAYS` | 90 | journal entries and answered commands older than this go |
+| `PROFILE_DIR` | `RESEARCH_DIR` | the game server's `profiles/OpenZone` directory, where the core writes its class dump (`classes.tsv`) at every start |
 
 ### From the console
 
@@ -232,21 +233,23 @@ spends, per owner; the rules have a chain canvas with an edge wherever an output
 an input by the station's own match, and the dead samples and unfed inputs named. The
 text and the history are tabs; a starter pack goes in as a zip of the nine files.
 
-### The class index
+### The class index (the kind `core`)
 
 Every class the server knows -- its five roots (`CfgVehicles`, `CfgMagazines`,
 `CfgNonAIVehicles`, `CfgAmmo`, `cfgWeapons`) with the parent of each class and its game
-name in two languages -- comes from the game itself. At every boot `OpenZone_Research`
-dumps them into the exchange directory (`classes.tsv`), reading the `original` and the
-`english` column of every `stringtable.csv` it can open in the loaded archives (the
-series' mods, CF, VPP); a class whose key no table holds gets the name the server itself
-resolves, in its own language, which is how vanilla comes out English. The bridge turns
-the dump into an index per server, kept in SQL, and the site reads the chosen server's:
-the editor's live search (a class name or a game name, in either language), the family
-test of the chain canvas (`IsKindOf` from the real inheritance), the game names on the
-cards and the existence checks all use it. Nothing to import, nothing to configure: a
+name in two languages -- comes from the game itself, and from the core rather than from
+any one mod, because every mod's editor needs it. At every start `OpenZone_Core` dumps
+them into `<PROFILE_DIR>/classes.tsv`, reading the `original` and the `english` column
+of every `stringtable.csv` it can open in the loaded archives (the series' mods, CF,
+VPP); a class whose key no table holds gets the name the server itself resolves, in its
+own language, which is how vanilla comes out English. The bridge reads the file at the
+server's first poll (and again after the game restarts) into an index per server, kept
+in SQL, and the site reads the chosen server's under the `Server` section: the research
+editor's live search (a class name or a game name, in either language), the family test
+of the chain canvas (`IsKindOf` from the real inheritance), the game names on the cards,
+the existence checks and the storage boxes' `give` form all use it. Nothing to import: a
 restart with other mods brings another list (the stand: 12 937 classes, 6 stringtables,
-half a second of the boot).
+about a second of the start).
 
 ### Sections blocked for mods the server does not run
 

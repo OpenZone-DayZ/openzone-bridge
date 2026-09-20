@@ -10,6 +10,8 @@ import { useToast } from '../app/toasts';
 import { Badge, Confirm, Field, HealthBar, Loading, Notice, Panel } from '../ui/bits';
 import { Table, type Col } from '../ui/Table';
 import { StatusBadge } from './BoxesPage';
+import { SuggestInput } from '../ui/SuggestInput';
+import { useClassIndex } from '../core/classes/useClassIndex';
 import {
   COLS, SIZES, cellOf, eventCell, groupRoots, isOk, num, rowsOf, shortType, stripRef,
   type Box, type Diff, type Event, type Item, type LiveResult, type Version,
@@ -206,14 +208,17 @@ function RootNode({ id, nodes, closed, hit, onEdit, onMove, onShelve }: {
   );
 }
 
+// The class comes with suggestions out of the server's own class list
+// (the core's dump): by class name or by game name, in either language.
 function GiveForm({ id, onDone, onClose }: { id: string; onDone: OnDone; onClose: () => void }) {
-  const { s } = useLang();
+  const { s, lang } = useLang();
+  const held = useClassIndex();
   const [type, setType] = useState('');
   const [qty, setQty] = useState('0');
   return (
     <Panel tight>
       <div className="row">
-        <Field label={s('give_class')}><input value={type} onChange={(e) => setType(e.target.value)} className="mono" size={28} /></Field>
+        <Field label={s('give_class')}><SuggestInput value={type} onChange={setType} options={[]} size={28} index={held.index} lang={lang} /></Field>
         <Field label={s('give_qty')}><input value={qty} onChange={(e) => setQty(e.target.value)} size={8} /></Field>
         <Confirm primary disabled={!type.trim()} label={s('give')} question={s('c_give', { type: type.trim(), qty: Number(qty) || 0, id })}
           onConfirm={() => onDone(api('storage', 'give', { id, type: type.trim(), qty: Number(qty) || 0 }))} />

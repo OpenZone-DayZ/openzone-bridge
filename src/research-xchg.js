@@ -1,7 +1,7 @@
 // The research files of one game server (design 2026-09-20, section 4.1):
-// the nine configs the game keeps in its profile, the faction states, the
-// classes the game dumps at boot, and the exchange directory where the
-// bridge leaves a candidate config for the game to read and delete. One
+// the nine configs the game keeps in its profile, the faction states, and
+// the exchange directory where the bridge leaves a candidate config for the
+// game to read and delete. One
 // owner per file at any moment: the game writes configs and states, the
 // bridge writes candidates, and every handover is a letter, never a watch
 // on the directory.
@@ -37,48 +37,12 @@ const TOKEN = /^[0-9a-f]{12}$/;
 const CANDIDATE = /^(Research[A-Za-z]+)\.([0-9a-f]{12})\.json$/;
 // A faction id as the game accepts it in a path (OZL_Ids.IsPathSafe).
 const OWNER_FILE = /^([A-Za-z0-9_-]{1,64})\.json$/;
-const CLASSES_FILE = 'classes.tsv';
-// The one-column dump of builds before 2026-09-20: swept, never read.
-const OLD_CLASSES_FILE = 'classes.txt';
+// The class dumps of builds before the core took them over (2026-09-20):
+// swept, never read -- the core writes <profile>/classes.tsv now.
+const OLD_CLASS_DUMPS = ['classes.txt', 'classes.tsv'];
 const RETRY_MS = 200;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// A game name that is still a bare key (a dangling $STR_) is no name; the
-// engine's $UNT$ mark on an untranslated string is not part of the name.
-const nameOrNothing = (v) => {
-  const s = String(v ?? '').trim().replace(/^\$UNT\$/, '');
-  return /^\$?STR_/i.test(s) ? '' : s;
-};
-
-// The five roots OZL_Match.ClassExists asks the game about, in the order
-// of the dump and of the site's index (classIndex.ts).
-export const ROOTS = ['CfgVehicles', 'CfgMagazines', 'CfgNonAIVehicles', 'CfgAmmo', 'cfgWeapons'];
-
-// The class index the admin site reads, out of one server's dump: the
-// shape classIndex.ts parses (v3 rows: name, parent row, mod, root, the
-// original column's name, the English one's) with one "mod", the server
-// itself, because the game does not say which addon declared a class.
-// The parent is looked up in the same root first (the game inherits
-// within a root), then in any.
-export function serverClassIndex(rows, server, at) {
-  const byRoot = new Map();
-  const byName = new Map();
-  rows.forEach((r, i) => {
-    const low = r.name.toLowerCase();
-    byRoot.set(`${r.root}:${low}`, i);
-    if (!byName.has(low)) byName.set(low, i);
-  });
-  const classes = rows.map((r) => {
-    const low = r.base.toLowerCase();
-    let parent = -1;
-    if (low) {
-      const same = byRoot.get(`${r.root}:${low}`);
-      parent = same !== undefined ? same : (byName.get(low) ?? -1);
-    }
-    return [r.name, parent, 0, r.root, r.original, r.english];
-  });
-  return { v: 3, generated: at, mods: [server], classes };
-}
 const strip = (s) => (s.charCodeAt(0) === 0xfeff ? s.slice(1) : s);
 
 export class ResearchXchg {
@@ -182,25 +146,6 @@ export class ResearchXchg {
     }
   }
 
-  // The classes the game dumps at boot (OZL_ClassDump): a line per class,
-  // tab-separated -- the root (0..4, the order of ROOTS), the name, the
-  // parent, the game name in the stringtables' original column and in the
-  // English one, as the server read them out of its archives.
-  readClasses() {
-    const p = join(this.xchgDir, CLASSES_FILE);
-    if (!existsSync(p)) return { rows: [], count: 0, at: '' };
-    const rows = [];
-    for (const line of readFileSync(p, 'utf8').split(/\r?\n/)) {
-      if (!line) continue;
-      const f = line.split('\t');
-      const root = Number(f[0]);
-      const name = (f[1] || '').trim();
-      if (!Number.isInteger(root) || root < 0 || root >= ROOTS.length || !name) continue;
-      rows.push({ root, name, base: (f[2] || '').trim(), original: nameOrNothing(f[3]), english: nameOrNothing(f[4]) });
-    }
-    return { rows, count: rows.length, at: stampNow(new Date(statSync(p).mtimeMs)) };
-  }
-
   // A candidate, written whole under a name nobody else uses, then renamed
   // into place: the game never sees half a file.
   writeCandidate(name, token, text) {
@@ -239,7 +184,7 @@ export class ResearchXchg {
     const removed = [];
     for (const file of readdirSync(this.xchgDir)) {
       let drop = false;
-      if (file.endsWith('.part') || file === OLD_CLASSES_FILE) drop = true;
+      if (file.endsWith('.part') || OLD_CLASS_DUMPS.includes(file)) drop = true;
       else {
         const c = ResearchXchg.parseCandidate(file);
         if (c) drop = !keep.has(c.token);

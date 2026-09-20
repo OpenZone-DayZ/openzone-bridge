@@ -4,6 +4,7 @@ export const en = {
   title: 'OpenZone Admin',
   kind_storage: 'Storage',
   kind_research: 'Research',
+  kind_core: 'Server',
   nav_boxes: 'Boxes',
   nav_shelf: 'Shelf',
   nav_find: 'Find',

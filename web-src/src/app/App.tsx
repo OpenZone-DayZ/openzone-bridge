@@ -15,7 +15,7 @@ import { FindPage, HealthPage, PlayerPage, ShelfPage, StorageJournalPage } from 
 import { MapPage } from '../storage/MapPage';
 import { ConfigsPage, FactionsPage, ResearchJournalPage, StaticsPage } from '../research/pages';
 import { EditorPage } from '../research/editor/EditorPage';
-import { ClassesPage } from '../research/classes/ClassesPage';
+import { ClassesPage } from '../core/classes/ClassesPage';
 import { JournalPage } from './JournalPage';
 
 export function App() {
@@ -42,7 +42,9 @@ export function App() {
   );
 }
 
-const SIDE: Record<'storage' | 'research', { page: string; key: Key }[]> = {
+const KIND_KEY = { storage: 'kind_storage', research: 'kind_research', core: 'kind_core' } as const;
+
+const SIDE: Record<'storage' | 'research' | 'core', { page: string; key: Key }[]> = {
   storage: [
     { page: 'boxes', key: 'nav_boxes' },
     { page: 'shelf', key: 'nav_shelf' },
@@ -56,8 +58,11 @@ const SIDE: Record<'storage' | 'research', { page: string; key: Key }[]> = {
     { page: 'configs', key: 'nav_configs' },
     { page: 'factions', key: 'nav_factions' },
     { page: 'statics', key: 'nav_statics' },
-    { page: 'classes', key: 'nav_classes' },
     { page: 'journal', key: 'nav_journal' },
+  ],
+  // The server itself: what the core tells the bridge, no mod's section.
+  core: [
+    { page: 'classes', key: 'nav_classes' },
   ],
 };
 
@@ -68,7 +73,7 @@ function Shell() {
   const { servers, current, choose, blocked } = useServers();
   document.title = s('title');
   const kind = route.kind === 'all' ? null : route.kind;
-  const off = kind ? blocked(kind) : null;
+  const off = kind && kind !== 'core' ? blocked(kind) : null;
   const gate = session.ready && session.auth && !session.name;
   return (
     <div className="shell">
@@ -77,6 +82,7 @@ function Shell() {
         <nav className="kinds">
           <a className={`${route.kind === 'storage' ? 'on' : ''}${blocked('storage') ? ' off' : ''}`} href={href('storage', 'boxes')} title={blocked('storage') ? s('blocked_short', { mod: 'OpenZone_Storage' }) : undefined}>{s('kind_storage')}</a>
           <a className={`${route.kind === 'research' ? 'on' : ''}${blocked('research') ? ' off' : ''}`} href={href('research', 'configs')} title={blocked('research') ? s('blocked_short', { mod: 'OpenZone_Research' }) : undefined}>{s('kind_research')}</a>
+          <a className={route.kind === 'core' ? 'on' : ''} href={href('core', 'classes')}>{s('kind_core')}</a>
           <a className={route.kind === 'all' ? 'on' : ''} href={href('all', 'journal')}>{s('nav_journal')}</a>
         </nav>
         <div className="who">
@@ -98,14 +104,14 @@ function Shell() {
       <div className="body">
         {kind && (
           <aside className="side">
-            <div className="group">{s(kind === 'storage' ? 'kind_storage' : 'kind_research')}</div>
+            <div className="group">{s(KIND_KEY[kind])}</div>
             {SIDE[kind].map((item) => (
               <a key={item.page} className={route.page === item.page || (route.page === 'box' && item.page === 'boxes') || (route.page === 'config' && item.page === 'configs') ? 'on' : ''} href={href(kind, item.page)}>{s(item.key)}</a>
             ))}
           </aside>
         )}
         <main>
-          {!session.ready ? <div className="empty">{s('loading')}</div> : gate ? <Gate /> : off && kind ? <BlockedKind kind={kind} server={off} /> : <Page route={route} />}
+          {!session.ready ? <div className="empty">{s('loading')}</div> : gate ? <Gate /> : off && kind && kind !== 'core' ? <BlockedKind kind={kind} server={off} /> : <Page route={route} />}
         </main>
       </div>
     </div>
@@ -175,11 +181,11 @@ function Gate() {
 
 function Page({ route }: { route: Route }): ReactNode {
   if (route.kind === 'all') return <JournalPage />;
+  if (route.kind === 'core') return <ClassesPage />;
   if (route.kind === 'research') {
     if (route.page === 'config' && route.arg) return <EditorPage name={route.arg} />;
     if (route.page === 'factions') return <FactionsPage />;
     if (route.page === 'statics') return <StaticsPage />;
-    if (route.page === 'classes') return <ClassesPage />;
     if (route.page === 'journal') return <ResearchJournalPage />;
     return <ConfigsPage />;
   }

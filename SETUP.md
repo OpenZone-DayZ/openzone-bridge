@@ -122,8 +122,10 @@ openssl rand -hex 32
 - `.env` → `RESEARCH_DIR` — only on a host that also runs the DayZ server with
   `OpenZone_Research`: the server profile's `OpenZone` directory (the one with the
   `OZ_Research_*.json` files). The bridge keeps every version of the nine configs and
-  edits them through the admin site. The classes the editor checks against come with
-  every boot of the game (the mod dumps them); nothing to configure for them.
+  edits them through the admin site.
+- `.env` → `PROFILE_DIR` — the same directory when `RESEARCH_DIR` is not set: the core
+  writes the server's classes there (`classes.tsv`) at every start, and the bridge reads
+  them for every editor's checks, searches and the boxes' `give` form.
 - `.env` → `ADMIN_PORT` (8788): the admin site (storage boxes, research configs), on
   this machine only; it needs `npm run build` once (the release zip has it built). To
   sign admins in through Discord, set `ADMIN_URL` to the page's address as a

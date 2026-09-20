@@ -1,7 +1,7 @@
-// The class page: what the chosen server dumped at its last boot -- every
-// class of its five roots with the parent and the game name in both
-// languages, read on the server itself -- and a live search to try it.
-// Nothing to import: a boot brings the list, a restart with other mods
+// The class page of the server itself: what the core dumped at its last
+// start -- every class of the five roots with the parent and the game name
+// in both languages, read on the server -- and a live search to try it.
+// Nothing to import: a start brings the list, a restart with other mods
 // brings another.
 
 import { useMemo, useState } from 'react';

@@ -6,6 +6,7 @@ export const uk: Record<keyof typeof en, string> = {
   title: 'OpenZone Admin',
   kind_storage: 'Сховище',
   kind_research: 'Дослідження',
+  kind_core: 'Сервер',
   nav_boxes: 'Ящики',
   nav_shelf: 'Полиця',
   nav_find: 'Пошук',

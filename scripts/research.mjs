@@ -67,10 +67,10 @@ class Leave extends Error {
   }
 }
 
-async function call(op, extra) {
+async function call(op, extra, route = '/v1/research/admin') {
   let r;
   try {
-    r = await fetch(`${BASE}/v1/research/admin`, {
+    r = await fetch(`${BASE}${route}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ Secret: SECRET, ServerId: 'cli', Json: JSON.stringify({ op, ...extra, admin: ADMIN }) }),
@@ -192,11 +192,11 @@ switch (cmd) {
     break;
   }
   case 'classes': {
-    // The server's dump as the bridge holds it: a count, or with --out the
-    // whole index as a table (root, class, parent, name in the original
-    // column, name in the English one).
+    // The server's classes as the bridge holds them (the core's dump, the
+    // kind `core`): a count, or with --out the whole index as a table (root,
+    // class, parent, name in the original column, name in the English one).
     if (OUT) {
-      const r = await call('classindex', {});
+      const r = await call('classindex', {}, '/v1/core/admin');
       if (!r.index) {
         console.error('no class dump from the game yet');
         throw new Leave(1);
@@ -207,7 +207,7 @@ switch (cmd) {
       writeFileSync(OUT, lines.join('\n') + '\n', 'utf8');
       console.log(`${lines.length} class(es) of server ${r.server} as of ${r.at} written to ${OUT}`);
     } else {
-      const r = await call('classes', {});
+      const r = await call('classes', {}, '/v1/core/admin');
       console.log(`${r.count} class(es) of server ${r.server || '(none yet)'} as of ${r.at || 'never'}`);
     }
     break;

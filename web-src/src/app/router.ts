@@ -10,8 +10,8 @@ export function parseHash(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/');
   const first = parts[0] || 'storage';
   if (first === 'journal') return { kind: 'all', page: 'journal', arg: '' };
-  const kind: Kind = first === 'research' ? 'research' : 'storage';
-  const page = parts[1] || (kind === 'storage' ? 'boxes' : 'configs');
+  const kind: Kind = first === 'research' ? 'research' : first === 'core' ? 'core' : 'storage';
+  const page = parts[1] || (kind === 'storage' ? 'boxes' : kind === 'core' ? 'classes' : 'configs');
   let arg = parts.slice(2).join('/');
   try {
     arg = decodeURIComponent(arg);

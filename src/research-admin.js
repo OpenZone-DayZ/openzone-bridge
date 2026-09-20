@@ -22,23 +22,6 @@ export function researchAdmin({ store, xchg, push, status }) {
   const who = (admin) => String(admin || 'admin').slice(0, BY_MAX);
   const idOf = (v) => (ID.test(String(v ?? '')) ? String(v) : '');
 
-  // The server whose class dump to answer: the named one, else the last
-  // to boot. What the boot route stored: a summary (count, when the game
-  // wrote the dump) beside the index itself.
-  function pickServer(server) {
-    const sid = String(server || '');
-    const rows = store.metaList('classes:');
-    const row = sid ? rows.find((r) => r.key === `classes:${sid}`) : rows[0];
-    if (!row) return null;
-    let summary = { count: 0, at: '' };
-    try {
-      summary = JSON.parse(row.value);
-    } catch {
-      // an unreadable summary counts as none
-    }
-    return { server: row.key.slice('classes:'.length), summary };
-  }
-
   // A command for the game: in SQL first (so a bridge restart re-sends it),
   // then into every server's next poll.
   function command(op, args, admin, note) {
@@ -205,31 +188,6 @@ export function researchAdmin({ store, xchg, push, status }) {
     },
 
     servers: () => ({ ok: true, servers: status ? (status().servers || []) : [] }),
-    // The classes of the chosen server (the last to boot when none is
-    // named), as the game dumped them at its boot: the count and when
-    // here, the index whole from `classindex` -- the shape the site's
-    // classIndex.ts parses, with the parents and the names in both
-    // languages the server read out of its stringtables.
-    classes: ({ server }) => {
-      if (!xchg) return off;
-      const found = pickServer(server);
-      if (!found) return { ok: true, server: '', count: 0, at: '' };
-      return { ok: true, server: found.server, ...found.summary };
-    },
-
-    classindex: ({ server }) => {
-      if (!xchg) return off;
-      const found = pickServer(server);
-      if (!found) return { ok: true, server: '', index: null, at: '' };
-      const row = store.metaGet(`classindex:${found.server}`);
-      if (!row) return { ok: true, server: found.server, index: null, at: '' };
-      try {
-        return { ok: true, server: found.server, index: JSON.parse(row.value), at: found.summary.at };
-      } catch {
-        return { ok: true, server: found.server, index: null, at: '' };
-      }
-    },
-
     reset: ({ owner, admin }) => {
       const o = idOf(owner);
       if (!o) return bad('bad owner');
@@ -273,7 +231,7 @@ export function researchAdmin({ store, xchg, push, status }) {
     },
 
     // The kind's own state for the health page: what index.js knows (the
-    // directories, the booted servers, the class list) plus the mail.
+    // directories, the booted servers) plus the mail.
     status: () => ({
       ok: true,
       configured: !!xchg,

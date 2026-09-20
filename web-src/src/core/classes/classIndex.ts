@@ -1,7 +1,8 @@
 // The class index: every class the chosen server knows, with its parent,
 // its root and its game name in the two languages of the site -- the dump
-// the game writes at every boot (the mods' stringtables read on the server
-// itself), turned into rows by the bridge and kept there per server. The
+// the core writes at every server start (the mods' stringtables read on
+// the server itself), turned into rows by the bridge and kept there per
+// server. The
 // row shape comes from ZP_Research's web editor, grown by a sixth element
 // (the English name beside the original column's); `mods` holds one
 // entry, the server, because the game does not say which addon declared

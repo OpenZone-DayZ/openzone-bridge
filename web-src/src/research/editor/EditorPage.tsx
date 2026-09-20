@@ -19,7 +19,7 @@ import {
   type ConfigName, type Doc, type Field, type RowRef,
 } from './schema';
 import { validate, worst, type Problem, type Severity } from './validate';
-import { useClassIndex } from '../classes/useClassIndex';
+import { useClassIndex } from '../../core/classes/useClassIndex';
 
 // The other configs an editor reads for its checks and pickers, fetched
 // once per page and kept for the session.

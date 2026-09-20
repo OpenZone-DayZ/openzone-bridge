@@ -27,6 +27,9 @@ import { ResearchStore } from './research-store.js';
 import { ResearchXchg } from './research-xchg.js';
 import { researchRoutes } from './research-routes.js';
 import { researchAdmin } from './research-admin.js';
+import { CoreStore } from './core-store.js';
+import { coreAdmin } from './core-admin.js';
+import { CLASSES_FILE, storeClassDump } from './core-classes.js';
 import { statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './history.js';
@@ -121,6 +124,9 @@ const cfg = {
   // unless RESEARCH_XCHG_DIR says otherwise. Unset, the research routes
   // refuse and the game keeps retrying its boot letter, quietly.
   researchDir: process.env.RESEARCH_DIR || '',
+  // The game server's profiles/OpenZone directory: where the core writes
+  // its class dump at every start. The research directory is the same one.
+  profileDir: String(process.env.PROFILE_DIR || process.env.RESEARCH_DIR || '').trim(),
   researchXchgDir: process.env.RESEARCH_XCHG_DIR || '',
   researchKeepVersionsDays: days('RESEARCH_KEEP_VERSIONS_DAYS', 30),
   researchKeepEventsDays: days('RESEARCH_KEEP_EVENTS_DAYS', 90),
@@ -138,6 +144,9 @@ const cfg = {
 };
 
 const store = new Store(cfg.dbPath);
+// The server's own facts (the kinds it booted, its class dump), apart from
+// any mod's tables.
+const core = new CoreStore(store);
 const storage = new StorageStore(store);
 // A BAD OR UNMOUNTED DIRECTORY MUST NOT STOP THE WHOLE BRIDGE. This used to
 // let `new Xchg` and the boot sweep throw straight out of module load -- a
@@ -175,7 +184,7 @@ const lastPoll = new Map();
 const serverKinds = new Map();
 const SERVER_KINDS_KEY = 'servers';
 function loadServerKinds() {
-  const row = research.metaGet(SERVER_KINDS_KEY);
+  const row = core.metaGet(SERVER_KINDS_KEY) || research.metaGet(SERVER_KINDS_KEY);
   if (!row) return;
   try {
     for (const [id, v] of Object.entries(JSON.parse(row.value))) serverKinds.set(id, { since: String(v.since || ''), kinds: { ...(v.kinds || {}) } });
@@ -184,7 +193,20 @@ function loadServerKinds() {
   }
 }
 function saveServerKinds() {
-  research.metaSet(SERVER_KINDS_KEY, JSON.stringify(Object.fromEntries(serverKinds)));
+  core.metaSet(SERVER_KINDS_KEY, JSON.stringify(Object.fromEntries(serverKinds)));
+}
+// The core's class dump, read into the index the site checks against:
+// once per server since the bridge started, again after the game restarts
+// (the core writes the file before its bridge client's first poll).
+const classesRead = new Set();
+function readClassesOf(sid) {
+  try {
+    const r = storeClassDump(core, cfg.profileDir, sid);
+    if (r) console.log(`[core] classes of ${sid}: ${r.count} from ${r.file}, written ${r.at}`);
+    else if (cfg.profileDir) console.log(`[core] classes of ${sid}: no ${CLASSES_FILE} under ${cfg.profileDir} (the core writes it when its bridge is on)`);
+  } catch (e) {
+    console.warn(`[core] classes of ${sid}: ${e.message}`);
+  }
 }
 function serverStarted(id) {
   serverKinds.set(id, { since: new Date().toISOString(), kinds: {} });
@@ -260,12 +282,14 @@ const researchPush = (obj) => {
 };
 const researchStatus = () => ({
   booted: researchRoutesSide.booted(),
-  classes: researchRoutesSide.classes().count,
   servers: serversInfo(),
   keep: research.keepPreview({ versionsDays: cfg.researchKeepVersionsDays, eventsDays: cfg.researchKeepEventsDays }),
 });
 const researchAdminOps = researchAdmin({ store: research, xchg: researchXchg, push: researchPush, status: researchStatus });
 const researchRoutesSide = researchRoutes({ store: research, xchg: researchXchg, admin: researchAdminOps });
+const coreAdminOps = coreAdmin({ store: core, servers: serversInfo, profileDir: cfg.profileDir });
+if (cfg.profileDir) console.log(`[core] profile directory ${cfg.profileDir}: the class dump is read at each server's first poll`);
+else console.log('[core] PROFILE_DIR (or RESEARCH_DIR) is not set: no class index, the editors check nothing');
 loadServerKinds();
 
 // OUR OWN ID FOR A RECORD, and it is deliberately not Discord's (TZ-2 R6.4).
@@ -566,6 +590,18 @@ async function pairFreeze(a, b, frozen) {
 
 const routes = {
   ...storageRoutes({ store: storage, xchg, admin: storageAdminOps }),
+  // The server's own admin side: the kind `core` of the site and the CLI.
+  '/v1/core/admin': async ({ Json }) => {
+    const op = String(Json?.op || '');
+    const fn = Object.prototype.hasOwnProperty.call(coreAdminOps, op) ? coreAdminOps[op] : null;
+    if (typeof fn !== 'function') return { ok: false, why: `unknown op: ${op}` };
+    try {
+      return await fn({ ...Json, admin: String(Json?.admin || 'cli') });
+    } catch (e) {
+      console.warn(`[core] admin ${op}: ${e.message}`);
+      return { ok: false, why: `${op} failed: ${e.message}` };
+    }
+  },
   ...researchRoutesSide.routes,
 
   // --- chat ---
@@ -1567,6 +1603,10 @@ function drain({ ServerId, Cursor, Uids, Fresh, Mirrors, AdminIds }) {
     rolesSeen.delete(ServerId);
     serverStarted(String(ServerId || ''));
   }
+  if (Fresh || !classesRead.has(String(ServerId || ''))) {
+    classesRead.add(String(ServerId || ''));
+    setImmediate(() => readClassesOf(String(ServerId || '')));
+  }
 
   // A SERVER THAT REMEMBERS NOTHING GETS THE CURSOR, NOT THE HISTORY.
   //
@@ -1881,7 +1921,7 @@ async function main() {
     if (webUp) {
       try {
         web = adminWeb({
-          kinds: { storage: storageAdminOps, research: researchAdminOps },
+          kinds: { storage: storageAdminOps, research: researchAdminOps, core: coreAdminOps },
           dir: join(HOME, 'web', 'dist'),
           mapImage: cfg.adminMapImage,
           allowedHosts: hostOfUrl ? [hostOfUrl] : [],

@@ -1,6 +1,7 @@
 // The class index as the site holds it: the chosen server's dump from its
-// last boot, fetched from the bridge once per server and shared by every
-// page that shows a class (the pickers, the checks, the canvases).
+// last start (the core's, kind `core`), fetched from the bridge once per
+// server and shared by every page that shows a class -- the pickers of
+// every mod, the checks, the canvases.
 
 import { useEffect, useState } from 'react';
 import { api } from '../../api/client';
@@ -23,7 +24,7 @@ function publish(next: IndexState) {
 // chosen yet.
 export async function fetchClassIndex(): Promise<IndexState> {
   publish({ ...state, loading: true, error: '' });
-  const r = await api<{ index: unknown; server: string; at: string }>('research', 'classindex');
+  const r = await api<{ index: unknown; server: string; at: string }>('core', 'classindex');
   if (!r.ok) {
     publish({ ...state, loading: false, error: r.why });
     return state;

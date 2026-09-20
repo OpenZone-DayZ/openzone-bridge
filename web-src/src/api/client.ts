@@ -3,7 +3,7 @@
 // reverse proxy may serve it under any prefix. Every refusal comes back as
 // { ok: false, why }; nothing here throws.
 
-export type Kind = 'storage' | 'research';
+export type Kind = 'storage' | 'research' | 'core';
 
 export type Refusal = { ok: false; why: string };
 export type Answer<T> = ({ ok: true } & T) | Refusal;
