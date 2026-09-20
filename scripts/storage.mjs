@@ -229,15 +229,19 @@ switch (cmd) {
     need(1, 'an id');
     const r = await call(cmd, { id: args[0] });
     console.log(`sent to the engine, ref ${r.ref}; ask for the answer with: node scripts/storage.mjs result ${r.ref}`);
-    for (let i = 0; i < 10; i++) {
+    // No process.exit() after a fetch: Node on Windows aborts (a libuv
+    // assertion in async.c) when the process exits with undici's socket
+    // still closing -- measured 2026-09-20 on the research CLI.
+    let answered = false;
+    for (let i = 0; i < 10 && !answered; i++) {
       await new Promise((res) => setTimeout(res, 1000));
       const { result } = await call('result', { ref: r.ref });
       if (result) {
         console.log(`answer: ${result.note}`);
-        process.exit(0);
+        answered = true;
       }
     }
-    console.log('no answer within 10 s (the engine polls the bridge every few seconds; try result later)');
+    if (!answered) console.log('no answer within 10 s (the engine polls the bridge every few seconds; try result later)');
     break;
   }
   case 'result': {

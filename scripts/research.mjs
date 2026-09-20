@@ -56,6 +56,17 @@ if (!SECRET) {
   process.exit(2);
 }
 
+// The exit code travels as a throw, never as process.exit() after a fetch:
+// Node on Windows aborts (a libuv assertion in async.c) when the process
+// exits while undici's socket is still closing. exitCode lets the loop
+// drain and the code stand.
+class Leave extends Error {
+  constructor(code) {
+    super('');
+    this.code = code;
+  }
+}
+
 async function call(op, extra) {
   let r;
   try {
@@ -66,16 +77,16 @@ async function call(op, extra) {
     });
   } catch (e) {
     console.error(`the bridge at ${BASE} does not answer: ${e.message}`);
-    process.exit(3);
+    throw new Leave(3);
   }
   const body = await r.json();
   if (r.status !== 200) {
     console.error(`${op}: ${r.status} ${JSON.stringify(body)}`);
-    process.exit(3);
+    throw new Leave(3);
   }
   if (!body.ok) {
     console.error(`${op}: ${body.why}`);
-    process.exit(1);
+    throw new Leave(1);
   }
   return body;
 }
@@ -119,6 +130,7 @@ async function waitFor(token, seconds) {
   return 4;
 }
 
+try {
 switch (cmd) {
   case 'configs': {
     const { configs } = await call('configs', {});
@@ -144,11 +156,11 @@ switch (cmd) {
       json = readFileSync(args[1], 'utf8');
     } catch (e) {
       console.error(`cannot read ${args[1]}: ${e.message}`);
-      process.exit(2);
+      throw new Leave(2);
     }
     const r = await call('save', { name: args[0], json });
     console.log(`candidate ${r.file}: version ${r.version} pending, token ${r.token}`);
-    process.exit(await waitFor(r.token, 30));
+    process.exitCode = await waitFor(r.token, 30);
     break;
   }
   case 'history': {
@@ -161,7 +173,7 @@ switch (cmd) {
     need(2, 'a config name and a version');
     const r = await call('restore', { name: args[0], version: args[1] });
     console.log(`candidate ${r.file}: version ${r.version} pending, token ${r.token}`);
-    process.exit(await waitFor(r.token, 30));
+    process.exitCode = await waitFor(r.token, 30);
     break;
   }
   case 'state': {
@@ -194,27 +206,27 @@ switch (cmd) {
     need(1, cmd === 'reset' ? 'an owner' : 'a static id');
     const r = await call(cmd, cmd === 'reset' ? { owner: args[0] } : { id: args[0] });
     console.log(`sent to the game, token ${r.token}`);
-    process.exit(await waitFor(r.token, 30));
+    process.exitCode = await waitFor(r.token, 30);
     break;
   }
   case 'grant': {
     need(3, 'an owner, a point type and an amount');
     const r = await call('grant', { owner: args[0], type: args[1], amount: args[2] });
     console.log(`sent to the game, token ${r.token}`);
-    process.exit(await waitFor(r.token, 30));
+    process.exitCode = await waitFor(r.token, 30);
     break;
   }
   case 'complete': {
     need(2, 'an owner and a node');
     const r = await call('complete', { owner: args[0], node: args[1] });
     console.log(`sent to the game, token ${r.token}`);
-    process.exit(await waitFor(r.token, 30));
+    process.exitCode = await waitFor(r.token, 30);
     break;
   }
   case 'reload': {
     const r = await call('reload', {});
     console.log(`sent to the game, token ${r.token}`);
-    process.exit(await waitFor(r.token, 30));
+    process.exitCode = await waitFor(r.token, 30);
     break;
   }
   case 'result': {
@@ -228,7 +240,7 @@ switch (cmd) {
   }
   case 'wait': {
     need(1, 'a token');
-    process.exit(await waitFor(args[0], Number(args[1]) || 60));
+    process.exitCode = await waitFor(args[0], Number(args[1]) || 60);
     break;
   }
   case 'events': {
@@ -249,5 +261,12 @@ switch (cmd) {
   }
   default:
     console.error(`unknown command ${cmd}\n${USAGE}`);
-    process.exit(2);
+    process.exitCode = 2;
+}
+} catch (e) {
+  if (e instanceof Leave) process.exitCode = e.code;
+  else {
+    console.error(e.message);
+    process.exitCode = 3;
+  }
 }
