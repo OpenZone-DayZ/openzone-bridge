@@ -118,6 +118,7 @@ export class StorageStore {
                      WHERE box_id = ?`),
       boxCache: q('UPDATE storage_boxes SET cache_stamp = ?, cache_size = ? WHERE box_id = ?'),
       boxRemoved: q(`UPDATE storage_boxes SET status = 'removed', removed_at = ? WHERE box_id = ?`),
+      boxBack: q(`UPDATE storage_boxes SET status = 'closed', removed_at = '' WHERE box_id = ?`),
       boxIds: q(`SELECT box_id FROM storage_boxes WHERE status != 'removed' ORDER BY box_id`),
       boxesLive: q(`SELECT box_id, status, current_version FROM storage_boxes
                     WHERE status != 'removed' AND current_version > 0 ORDER BY box_id`),
@@ -269,17 +270,33 @@ export class StorageStore {
   // what SQL knows about each, and every class that SQL holds anywhere.
   boot(boxes, at = stampNow()) {
     const out = [];
+    const back = [];
     for (const b of boxes) {
       this.seen(b.id, { class: b.class || '', pos: b.pos || '', at });
-      const row = this.boxOf(b.id);
-      if (!row || row.current_version === 0 || row.status === 'removed') {
+      let row = this.boxOf(b.id);
+      // A box SQL calls removed that the engine HAS. The entity behind a
+      // real delete never comes back -- the id is the engine's own and is
+      // not reused -- so this is a world rolled back to before the box was
+      // written off, and SQL is the one that is wrong. It comes back closed,
+      // with everything the archive still holds. Answering 'none' here while
+      // the open route answered 'unknown box' left such a box in the world
+      // that no player could open at all.
+      if (row && row.status === 'removed') {
+        this.q.boxBack.run(b.id);
+        back.push(b.id);
+        row = this.boxOf(b.id);
+      }
+      if (!row || row.current_version === 0) {
         out.push({ id: b.id, status: 'none', version: 0, roots: 0 });
         continue;
       }
       const v = this.q.verGet.get(row.current_version);
       out.push({ id: b.id, status: row.status, version: row.current_version, roots: v ? v.roots : 0 });
     }
-    return { boxes: out, classes: this.classes() };
+    if (back.length) {
+      this.events(back.map((id) => ({ at, kind: 'back_in_world', box: id, note: 'the server has it again; it was archived' })), 'boot');
+    }
+    return { boxes: out, classes: this.classes(), back };
   }
 
   classes() {

@@ -133,9 +133,9 @@ export function BoxPage({ id }: { id: string }) {
         <ul>
           {roots.map((nodes, idx) => (nodes ? (
             <RootNode key={idx} id={id} nodes={nodes} closed={closed} hit={hit}
-              onEdit={(n) => setForm(<EditForm id={id} rootIdx={idx} node={n} onDone={changed} onClose={() => setForm(null)} />)}
-              onMove={(n) => setForm(<MoveForm id={id} rootIdx={idx} node={n} onDone={changed} onClose={() => setForm(null)} />)}
-              onShelve={() => changed(api('storage', 'shelve', { id, root: idx }))}
+              onEdit={(n) => setForm(<EditForm id={id} rootIdx={idx} node={n} version={box.current_version} onDone={changed} onClose={() => setForm(null)} />)}
+              onMove={(n) => setForm(<MoveForm id={id} rootIdx={idx} node={n} version={box.current_version} onDone={changed} onClose={() => setForm(null)} />)}
+              onShelve={() => changed(api('storage', 'shelve', { id, root: idx, version: box.current_version }))}
             />
           ) : null))}
         </ul>
@@ -265,13 +265,13 @@ function GiveForm({ id, onDone, onClose }: { id: string; onDone: OnDone; onClose
   );
 }
 
-function EditForm({ id, rootIdx, node, onDone, onClose }: { id: string; rootIdx: number; node: Item; onDone: OnDone; onClose: () => void }) {
+function EditForm({ id, rootIdx, node, version, onDone, onClose }: { id: string; rootIdx: number; node: Item; version: number; onDone: OnDone; onClose: () => void }) {
   const { s } = useLang();
   const [qty, setQty] = useState('');
   const [hp, setHp] = useState('');
   const [reset, setReset] = useState(false);
   const submit = () => {
-    const body: Record<string, unknown> = { id, root: rootIdx, node: node.node_idx };
+    const body: Record<string, unknown> = { id, root: rootIdx, node: node.node_idx, version };
     if (qty.trim() !== '') body.quantity = qty.trim();
     if (hp.trim() !== '') body.health = hp.trim();
     if (reset) body.reset = true;
@@ -292,7 +292,7 @@ function EditForm({ id, rootIdx, node, onDone, onClose }: { id: string; rootIdx:
   );
 }
 
-function MoveForm({ id, rootIdx, node, onDone, onClose }: { id: string; rootIdx: number; node: Item; onDone: OnDone; onClose: () => void }) {
+function MoveForm({ id, rootIdx, node, version, onDone, onClose }: { id: string; rootIdx: number; node: Item; version: number; onDone: OnDone; onClose: () => void }) {
   const { s } = useLang();
   const [to, setTo] = useState('');
   return (
@@ -301,7 +301,7 @@ function MoveForm({ id, rootIdx, node, onDone, onClose }: { id: string; rootIdx:
         <span className="mono">{node.type}</span>
         <Field label={s('move_to')}><input value={to} onChange={(e) => setTo(e.target.value)} className="mono" size={44} /></Field>
         <Confirm primary disabled={!to.trim()} label={s('move')} question={s('c_move', { type: node.type, id, to: to.trim() })}
-          onConfirm={() => onDone(api('storage', 'move', { from: id, root: rootIdx, to: to.trim() }))} />
+          onConfirm={() => onDone(api('storage', 'move', { from: id, root: rootIdx, to: to.trim(), version }))} />
         <button type="button" className="ghost" onClick={onClose}>{s('close')}</button>
       </div>
     </Panel>

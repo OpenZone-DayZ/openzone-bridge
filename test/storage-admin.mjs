@@ -461,6 +461,67 @@ console.log('recovering a box the world lost');
     ['no server has booted storage yet, so the world cannot be asked; try once one has', 'the box is not open']);
 }
 
+console.log('the four corners the owner asked about');
+
+{
+  const sizes = () => new Map([
+    ['oz_storagebox_large', { w: 10, h: 5, cw: 10, ch: 4 }],
+    ['paper', { w: 1, h: 1, cw: 0, ch: 0 }],
+  ]);
+  const boot = '2026-09-20T00:00:00Z';
+  const withWorld = storageAdmin({
+    store: s, xchg: x, push: () => {}, sizes,
+    health: () => ({ servers: [{ id: 'stand', at: '', since: '', kinds: { storage: boot } }] }),
+  });
+
+  // 1. A target the world does not have either.
+  const SRC = '-401-401-401-401';
+  const LOSTTOO = '-402-402-402-402';
+  const REAL = '-403-403-403-403';
+  s.ingestClose({ boxId: SRC, header: header('2026-09-19 14:00:00'), chunks: [c0], at: '2026-09-19 14:00:01' });
+  s.ingestClose({ boxId: LOSTTOO, header: header('2026-09-19 14:00:00'), chunks: [], at: '2026-09-19 14:00:01' });
+  s.ingestClose({ boxId: REAL, header: header('2026-09-21 14:00:00'), chunks: [], at: '2026-09-21 14:00:01' });
+  s.seen(REAL, { at: '2026-09-21 14:00:01' });
+  ok('a restore into a box the world lost too is refused', withWorld.restore({ id: SRC, to: LOSTTOO, admin: 't', server: 'stand' }),
+    { ok: false, why: 'the target is not in the world either; pick a box the server has' });
+  ok('and into one the world has it goes', withWorld.restore({ id: SRC, to: REAL, admin: 't', server: 'stand' }).ok, true);
+
+  // 2. An archived box the world has again.
+  const RISEN = '-404-404-404-404';
+  s.ingestClose({ boxId: RISEN, header: header('2026-09-19 14:00:00'), chunks: [c0, c1], at: '2026-09-19 14:00:01' });
+  const heldVersion = s.boxOf(RISEN).current_version;
+  s.removed(RISEN, '2026-09-19 14:05:00');
+  const answer = s.boot([{ id: RISEN, class: 'OZ_StorageBox_Large', pos: '' }], '2026-09-21 14:00:01');
+  ok('the boot brings it back rather than calling it none', answer.boxes[0], { id: RISEN, status: 'closed', version: heldVersion, roots: 2 });
+  ok('it is a live box again, with its deletion time cleared', [s.boxOf(RISEN).status, s.boxOf(RISEN).removed_at], ['closed', '']);
+  ok('the boot names which came back', answer.back, [RISEN]);
+  ok('and leaves a trace of it', s.eventsOf(RISEN)[0].kind, 'back_in_world');
+
+  // 3. No class dump at all: a root still cannot cost less than one cell.
+  const blind = storageAdmin({ store: s, xchg: x, push: () => {}, health: () => ({ servers: [{ id: 'stand', at: '', since: '', kinds: { storage: boot } }] }) });
+  const MANY = '-405-405-405-405';
+  const SMALL = '-406-406-406-406';
+  s.ingestClose({ boxId: MANY, header: header('2026-09-19 14:00:00'), chunks: Array.from({ length: 300 }, (_, i) => buildChunk([paper(i % 10, 0)], Buffer.from('dd', 'hex'))), at: '2026-09-19 14:00:01' });
+  s.ingestClose({ boxId: SMALL, header: { stamp: '2026-09-21 14:00:00', boxClass: 'OZ_StorageBox_Small', saveVer: 142 }, chunks: [], at: '2026-09-21 14:00:01' });
+  s.seen(SMALL, { class: 'OZ_StorageBox_Small', at: '2026-09-21 14:00:01' });
+  const floor = blind.restore({ id: MANY, to: SMALL, admin: 't', server: 'stand' });
+  ok('without sizes a restore still stops at the cargo the box has', [floor.ok, floor.roots, floor.left], [true, 250, 50]);
+
+  // 4. A root named by a number that has since moved.
+  const DRIFT = '-407-407-407-407';
+  s.ingestClose({ boxId: DRIFT, header: header('2026-09-21 14:00:00'), chunks: [c0, c1], at: '2026-09-21 14:00:01' });
+  s.seen(DRIFT, { at: '2026-09-21 14:00:01' });
+  const drawn = s.boxOf(DRIFT).current_version;
+  s.give(DRIFT, 'Rag', 1, { at: '2026-09-21 14:01:00' });
+  const now = s.boxOf(DRIFT).current_version;
+  const said = `the box moved on: you are looking at version ${drawn}, it is at ${now}. Reload and try again`;
+  ok('a shelve from a page that has gone stale is refused', withWorld.shelve({ id: DRIFT, root: 0, admin: 't', version: drawn }), { ok: false, why: said });
+  ok('so is a move', withWorld.move({ from: DRIFT, root: 0, to: REAL, admin: 't', version: drawn }), { ok: false, why: said });
+  ok('so is an edit', withWorld.edit({ id: DRIFT, root: 0, node: 0, quantity: '2', admin: 't', version: drawn }), { ok: false, why: said });
+  ok('with the version it really is at, the shelve goes through', withWorld.shelve({ id: DRIFT, root: 0, admin: 't', version: now }).ok, true);
+  ok('and a caller that names no version is trusted as before', withWorld.shelve({ id: DRIFT, root: 0, admin: 't' }).ok, true);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();
 rmSync(dir, { recursive: true, force: true });

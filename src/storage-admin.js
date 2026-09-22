@@ -131,6 +131,20 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
     };
   }
 
+  // A root is named by its NUMBER, and the numbers shift whenever the box
+  // changes: a move, a shelve, a partial restore all renumber what is
+  // left. A page that rendered before such a change would then point its
+  // action at a different root than the one on screen. `version` is what
+  // the caller believes the box is at; when it says otherwise, nothing is
+  // done and the caller is told to look again.
+  const stale = (box, version) => {
+    if (version === undefined || version === null || version === '') return '';
+  const want = Number(version);
+    if (!Number.isInteger(want) || want <= 0) return '';
+    if (want === box.current_version) return '';
+    return `the box moved on: you are looking at version ${want}, it is at ${box.current_version}. Reload and try again`;
+  };
+
   function live(cmd, id, admin) {
     if (!known(id)) return bad('unknown box');
     if (!push) return bad('no live channel');
@@ -225,9 +239,11 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
 
     // A root of a closed box onto the shelf: parked with the reason admin,
     // its bytes intact, to be returned or thrown away later.
-    shelve: ({ id, root, admin }) => {
+    shelve: ({ id, root, admin, version }) => {
       const box = known(id);
       if (!box) return bad('unknown box');
+      const moved = stale(box, version);
+      if (moved) return bad(moved);
       if (box.status !== 'closed') return bad('the box is open; close it first');
       const idx = Number(root);
       if (!Number.isInteger(idx) || idx < 0) return bad('bad root index');
@@ -238,7 +254,11 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
       return { ok: true, ...r };
     },
 
-    move: ({ from, root, to, admin }) => {
+    move: ({ from, root, to, admin, version }) => {
+      const src = archived(from);
+      if (!src) return bad('unknown box');
+      const shifted = stale(src, version);
+      if (shifted) return bad(shifted);
       const r = store.moveRoot(String(from || ''), Number(root), String(to || ''), { admin });
       if (!r.ok) return r;
       dropCache(String(from));
@@ -257,28 +277,44 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
       if (!from) return bad('unknown box');
       const target = known(to);
       if (!target) return bad('unknown target box');
+      // The target must be a box the world actually has. Pouring into one
+      // the server did not report at its last boot only moves the cargo
+      // from one box nobody can open to another, and the admin would have
+      // to find that out by opening it. 'unknown' is allowed: with no boot
+      // to judge by the bridge does not know either way, and refusing every
+      // restore until a server comes up would be worse.
+      const there = inWorld(server)(target);
+      if (there.in_world === 'no') return bad('the target is not in the world either; pick a box the server has');
       // As many roots as the target has cells for, in order; the rest stay
       // where they are and go into the next box. A box filled when the
       // classes gave it more cells than they do today holds more than any
       // one of today's boxes can take, and all-or-nothing would strand it
       // for good.
+      //
+      // Without the server's class dump nothing can be sized, but a root
+      // still cannot cost LESS than one cell, so the count is checked
+      // against the box's own cargo all the same -- a floor, not a guess,
+      // and better than pouring a thousand roots into a box for ten.
       let take = null;
       const map = sizesFor(server);
-      if (map) {
-        const have = cellsOf(target.class, store.itemsOf(target.box_id), map);
-        const per = rootCells(store.itemsOf(from.box_id), map);
-        if (have.max > 0) {
-          let free = have.max - have.used;
-          take = [];
-          for (const [idx, cost] of [...per].sort((a, b) => a[0] - b[0])) {
-            if (cost > free) continue;
-            free -= cost;
-            take.push(idx);
-          }
-          if (take.length === 0) {
-            const smallest = Math.min(...[...per.values()]);
-            return bad(`no room: ${have.max - have.used} cell(s) free in the target, its smallest root needs ${smallest}`);
-          }
+      const have = cellsOf(target.class, store.itemsOf(target.box_id), map);
+      const per = map
+        ? rootCells(store.itemsOf(from.box_id), map)
+        : new Map(store.itemsOf(from.box_id).filter((it) => it.parent === -1).map((it) => [it.root_idx, 1]));
+      // An empty source has nothing to fit anywhere: leave the refusal to
+      // the store, which says so plainly, rather than reporting no room for
+      // a smallest root that does not exist.
+      if (have.max > 0 && per.size > 0) {
+        let free = have.max - have.used;
+        take = [];
+        for (const [idx, cost] of [...per].sort((a, b) => a[0] - b[0])) {
+          if (cost > free) continue;
+          free -= cost;
+          take.push(idx);
+        }
+        if (take.length === 0) {
+          const smallest = Math.min(...[...per.values()]);
+          return bad(`no room: ${have.max - have.used} cell(s) free in the target, its smallest root needs ${smallest}`);
         }
       }
       const r = store.restoreBox(String(id || ''), String(to || ''), { admin, take });
@@ -333,7 +369,11 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
       return { ok: true, status: 'removed' };
     },
 
-    edit: ({ id, root, node, quantity, health: hp, reset, admin }) => {
+    edit: ({ id, root, node, quantity, health: hp, reset, admin, version }) => {
+      const held = known(id);
+      if (!held) return bad('unknown box');
+      const drifted = stale(held, version);
+      if (drifted) return bad(drifted);
       const doReset = reset === true || reset === 1 || reset === 'true' || reset === '1';
       const r = store.editNode(String(id || ''), Number(root), Number(node), { quantity, health: hp, reset: doReset }, { admin });
       if (!r.ok) return r;

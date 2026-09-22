@@ -28,6 +28,9 @@ export function storageRoutes({ store, xchg, admin }) {
         console.warn(`[storage] boot: sweep failed (${e.code || e.message})`);
       }
       console.log(`[storage] boot: ${boxes.length} box(es), ${answer.classes.length} class(es) to check`);
+      if (answer.back.length) {
+        console.log(`[storage] boot: ${answer.back.length} archived box(es) are in the world again and were brought back closed: ${answer.back.join(', ')}`);
+      }
       return { ok: true, ...answer };
     },
 

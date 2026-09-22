@@ -40,7 +40,7 @@ const s = new StorageStore(base);
 console.log('boot and close');
 
 ok('an unknown box boots as none', s.boot([{ id: BOX, class: 'OZ_StorageBox_Large', state: 'CLOSED', entities: 0, pos: '4650 339 10400' }]),
-  { boxes: [{ id: BOX, status: 'none', version: 0, roots: 0 }], classes: [] });
+  { boxes: [{ id: BOX, status: 'none', version: 0, roots: 0 }], classes: [], back: [] });
 ok('boot remembers the box', [s.boxOf(BOX).class, s.boxOf(BOX).pos], ['OZ_StorageBox_Large', '4650 339 10400']);
 
 const c0 = buildChunk([paper(0, 0)], Buffer.from('aa', 'hex'));
