@@ -614,7 +614,11 @@ export class StorageStore {
   // holding nothing. Copying would let one archive be poured twice and mint
   // items out of nothing. The history stays either way -- the older versions
   // still show what the box held, and what was restored, when and by whom.
-  restoreBox(fromId, toId, { at = stampNow(), admin = '' } = {}) {
+  // `take` names the roots to move, by index, for when not all of them fit
+  // in the target; leaving it out moves the lot. What is not taken stays in
+  // the source, so a box holding more than any one of today's boxes can hold
+  // is emptied over several targets, one call each.
+  restoreBox(fromId, toId, { at = stampNow(), admin = '', take = null } = {}) {
     if (fromId === toId) return { ok: false, why: 'the same box' };
     const from = this.boxOf(fromId);
     if (!from) return { ok: false, why: 'unknown box' };
@@ -624,20 +628,28 @@ export class StorageStore {
     if (to.status !== 'closed') return { ok: false, why: 'the target box is open; close it first' };
     const cur = this.currentChunks(fromId);
     if (!cur || cur.chunks.length === 0) return { ok: false, why: 'there is nothing in it to restore' };
+    const wanted = take === null
+      ? cur.chunks.map((_, i) => i)
+      : [...new Set(take.map(Number))].filter((i) => Number.isInteger(i) && i >= 0 && i < cur.chunks.length).sort((x, y) => x - y);
+    if (wanted.length === 0) return { ok: false, why: 'no root of this box was named' };
+    const moving = new Set(wanted);
+    const goes = wanted.map((i) => cur.chunks[i]);
+    const stays = cur.chunks.filter((_, i) => !moving.has(i));
     const target = this.currentChunks(toId);
     const targetChunks = target ? target.chunks : [];
-    const roots = cur.chunks.length;
+    const roots = goes.length;
     const who = admin ? ` by ${admin}` : '';
+    const rest = stays.length ? `, ${stays.length} left` : '';
     return this.#tx(() => {
-      const a = this.#newVersion(fromId, [], {
-        at, source: 'admin', saveVer: cur.saveVer, note: `restored ${roots} root(s) into ${toId}${who}`,
+      const a = this.#newVersion(fromId, stays, {
+        at, source: 'admin', saveVer: cur.saveVer, note: `restored ${roots} root(s) into ${toId}${who}${rest}`,
       });
-      const b = this.#newVersion(toId, [...targetChunks, ...cur.chunks.map(unplace)], {
+      const b = this.#newVersion(toId, [...targetChunks, ...goes.map(unplace)], {
         at, source: 'admin', saveVer: this.#saveVerFor(toId, target ? target.saveVer : 0, cur.saveVer),
         note: `restored ${roots} root(s) from ${fromId}${who}`,
       });
       if (from.status === 'removed') this.q.boxRemoved.run(from.removed_at || at, fromId);
-      return { ok: true, roots, fromVersion: a.version, toVersion: b.version };
+      return { ok: true, roots, left: stays.length, fromVersion: a.version, toVersion: b.version };
     });
   }
 

@@ -52,6 +52,23 @@ export function cellsOf(boxClass, items, sizes) {
   return { used, max, unknown };
 }
 
+// The cells each ROOT of a box costs, by root index. cellsOf adds these up;
+// a restore that cannot move everything needs them one by one. A root that
+// is not in the cargo (attached in a slot) costs the cargo nothing.
+export function rootCells(items, sizes) {
+  const per = new Map();
+  for (const it of items) {
+    if (it.parent !== -1) continue;
+    if (it.loc_type !== 3) {
+      per.set(it.root_idx, 0);
+      continue;
+    }
+    const sz = sizes ? sizes.get(String(it.type).toLowerCase()) : null;
+    per.set(it.root_idx, sz && sz.w && sz.h ? sz.w * sz.h : 1);
+  }
+  return per;
+}
+
 export function storageAdmin({ store, xchg, push, health, sizes = null }) {
   // The class sizes of the chosen server, else of the first that runs
   // storage: what the core dumped at its start (core-classes.js).
@@ -227,21 +244,62 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
       if (!from) return bad('unknown box');
       const target = known(to);
       if (!target) return bad('unknown target box');
+      // As many roots as the target has cells for, in order; the rest stay
+      // where they are and go into the next box. A box filled when the
+      // classes gave it more cells than they do today holds more than any
+      // one of today's boxes can take, and all-or-nothing would strand it
+      // for good.
+      let take = null;
       const map = sizesFor(server);
       if (map) {
         const have = cellsOf(target.class, store.itemsOf(target.box_id), map);
-        const coming = cellsOf(target.class, store.itemsOf(from.box_id), map);
-        if (have.max > 0 && have.used + coming.used > have.max) {
-          return bad(`no room: ${have.max - have.used} cell(s) free in the target, the archive needs ${coming.used}`);
+        const per = rootCells(store.itemsOf(from.box_id), map);
+        if (have.max > 0) {
+          let free = have.max - have.used;
+          take = [];
+          for (const [idx, cost] of [...per].sort((a, b) => a[0] - b[0])) {
+            if (cost > free) continue;
+            free -= cost;
+            take.push(idx);
+          }
+          if (take.length === 0) {
+            const smallest = Math.min(...[...per.values()]);
+            return bad(`no room: ${have.max - have.used} cell(s) free in the target, its smallest root needs ${smallest}`);
+          }
         }
       }
-      const r = store.restoreBox(String(id || ''), String(to || ''), { admin });
+      const r = store.restoreBox(String(id || ''), String(to || ''), { admin, take });
       if (!r.ok) return r;
       dropCache(String(id));
       dropCache(String(to));
-      record('admin_restore', String(id), admin, `${r.roots} root(s) into ${to}, version ${r.fromVersion}`);
+      const rest = r.left ? `, ${r.left} left` : '';
+      record('admin_restore', String(id), admin, `${r.roots} root(s) into ${to}, version ${r.fromVersion}${rest}`);
       record('admin_restore', String(to), admin, `${r.roots} root(s) from ${id}, version ${r.toVersion}`);
       return r;
+    },
+
+    // A box SQL believes open that the world does not have. Every operation
+    // that writes refuses an open box, and the only road to closing one runs
+    // through the game -- which cannot answer for a box it does not have. So
+    // the cargo of a box that vanished while open is walled in, with no way
+    // out at all. This is that way out, and it is allowed for exactly the
+    // case that makes it safe: the server did not report the box at its last
+    // boot, so no one in the game can be looking inside it. A box that IS in
+    // the world keeps the game as the only authority -- use the live close.
+    markClosed: ({ id, admin, server }) => {
+      const box = known(id);
+      if (!box) return bad('unknown box');
+      if (box.status !== 'open') return bad('the box is not open');
+      const seen = inWorld(server)(box);
+      if (seen.in_world !== 'no') {
+        return bad(seen.in_world === 'yes'
+          ? 'the box is in the world; close it with the live command instead'
+          : 'no server has booted storage yet, so the world cannot be asked; try once one has');
+      }
+      if (!store.markClosed(String(id || ''))) return bad('unknown box');
+      dropCache(String(id));
+      record('admin_mark_closed', String(id), admin, `stuck open, absent from the world since ${seen.world_boot}`);
+      return { ok: true, status: 'closed' };
     },
 
     edit: ({ id, root, node, quantity, health: hp, reset, admin }) => {

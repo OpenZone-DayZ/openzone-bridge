@@ -388,6 +388,56 @@ console.log('un-archiving a deleted box into a living one');
   ok('a deleted box is never a target', admin.move({ from: HOME, root: 0, to: GONE3, admin: 'tester' }), { ok: false, why: 'unknown target box' });
 }
 
+console.log('recovering a box the world lost');
+
+{
+  // The general case the owner asked for: a box SQL still believes alive
+  // that the server no longer has. Two things stand in the way -- a stale
+  // open flag, and a box filled when its class gave it more cells than it
+  // does now, so its cargo fits in no single box of today.
+  const sizes = () => new Map([
+    ['oz_storagebox_large', { w: 10, h: 5, cw: 10, ch: 4 }],   // 40 cells
+    ['plate', { w: 5, h: 5, cw: 0, ch: 0 }],                   // 25 each
+    ['paper', { w: 1, h: 1, cw: 0, ch: 0 }],
+  ]);
+  const boot = '2026-09-20T00:00:00Z';
+  const rescue = storageAdmin({
+    store: s, xchg: x, push: (o) => pushed.push(o), sizes,
+    health: () => ({ servers: [{ id: 'stand', at: '', since: '', kinds: { storage: boot } }] }),
+  });
+  const plate = (n) => buildChunk([{ parent: -1, type: 'Plate', locType: 3, slot: -1, row: n, col: 0, flip: 0, health: 100, quantity: 0, liquid: 0, ammo: 0, hasBlob: 1 }], Buffer.from('cc', 'hex'));
+
+  const LOST = '-301-301-301-301';
+  const HOME1 = '-302-302-302-302';
+  const HOME2 = '-303-303-303-303';
+  // Three plates, 75 cells: more than a 40-cell box can take.
+  s.ingestClose({ boxId: LOST, header: header('2026-09-19 13:00:00'), chunks: [plate(0), plate(1), plate(2)], at: '2026-09-19 13:00:01' });
+  s.ingestClose({ boxId: HOME1, header: header('2026-09-21 13:00:00'), chunks: [], at: '2026-09-21 13:00:01' });
+  s.ingestClose({ boxId: HOME2, header: header('2026-09-21 13:00:00'), chunks: [], at: '2026-09-21 13:00:01' });
+  // The two homes were seen after the boot; the lost box was not.
+  s.seen(HOME1, { at: '2026-09-21 13:00:01' });
+  s.seen(HOME2, { at: '2026-09-21 13:00:01' });
+
+  s.markOpen(LOST, '2026-09-19 13:00:02');
+  ok('a stranded box stuck open cannot be poured out', rescue.restore({ id: LOST, to: HOME1, admin: 'tester' }), { ok: false, why: 'the box is open; close it first' });
+  ok('the world says it is not there', rescue.box({ id: LOST, server: 'stand' }).box.in_world, 'no');
+  ok('so SQL can be told to stop believing it open', rescue.markClosed({ id: LOST, admin: 'tester', server: 'stand' }), { ok: true, status: 'closed' });
+  ok('and it leaves a trace of who did it', s.eventsOf(LOST)[0].kind, 'admin_mark_closed');
+  ok('doing it twice is refused', rescue.markClosed({ id: LOST, admin: 'tester', server: 'stand' }), { ok: false, why: 'the box is not open' });
+  s.markOpen(HOME1, '2026-09-21 13:00:01');
+  ok('a box the world DOES have is left to the game', rescue.markClosed({ id: HOME1, admin: 'tester', server: 'stand' }), { ok: false, why: 'the box is in the world; close it with the live command instead' });
+  s.markClosed(HOME1);
+
+  // 40 cells take one plate of 25; the other two stay for the next box.
+  const first = rescue.restore({ id: LOST, to: HOME1, admin: 'tester' });
+  ok('a restore moves what fits and says what is left', [first.ok, first.roots, first.left], [true, 1, 2]);
+  ok('the target holds it', s.currentChunks(HOME1).chunks.length, 1);
+  const second = rescue.restore({ id: LOST, to: HOME2, admin: 'tester' });
+  ok('the next box takes the next one', [second.roots, second.left], [1, 1]);
+  ok('a full target is refused with what it would need', rescue.restore({ id: LOST, to: HOME1, admin: 'tester' }).why, 'no room: 15 cell(s) free in the target, its smallest root needs 25');
+  ok('and the last root is still waiting, not lost', s.currentChunks(LOST).chunks.length, 1);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();
 rmSync(dir, { recursive: true, force: true });

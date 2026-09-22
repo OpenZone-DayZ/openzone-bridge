@@ -96,16 +96,29 @@ export function BoxPage({ id }: { id: string }) {
       </div>
       {form}
 
-      {box.status === 'removed'
-        ? (
-          <Panel tight title={s('archived_title')}>
-            <Notice tone="alert">{s('archived_text', { when: box.removed_at || '' })}</Notice>
+      {box.status === 'removed' ? (
+        <Panel tight title={s('archived_title')}>
+          <Notice tone="alert">{s('archived_text', { when: box.removed_at || '' })}</Notice>
+          <RestoreForm id={id} roots={roots.filter(Boolean).length} onDone={changed} />
+        </Panel>
+      ) : box.in_world === 'no' ? (
+        // Stranded: SQL still believes this box alive, the world no longer
+        // has it. Its cargo comes out the same way an archive's does -- once
+        // SQL stops believing it open, which only a box absent from the
+        // world may be told.
+        <Panel tight title={s('live_title')}>
+          <Notice tone="alert">{s('absent_text', { since: box.world_boot || '' })}</Notice>
+          {box.status === 'open' ? (
+            <div className="row">
+              <span className="muted small">{s('stuck_open')}</span>
+              <Confirm warn label={s('mark_closed')} question={s('c_mark_closed')}
+                onConfirm={() => changed(api('storage', 'markClosed', { id }))} />
+            </div>
+          ) : (
             <RestoreForm id={id} roots={roots.filter(Boolean).length} onDone={changed} />
-          </Panel>
-        )
-        : box.in_world === 'no'
-          ? <Panel tight title={s('live_title')}><Notice tone="alert">{s('absent_text', { since: box.world_boot || '' })}</Notice></Panel>
-          : <LivePanel box={box} onChanged={load} />}
+          )}
+        </Panel>
+      ) : <LivePanel box={box} onChanged={load} />}
 
       <h2>{s('grid')}</h2>
       <Grid box={box} items={items} roots={roots} hit={hit} index={held.index} />
