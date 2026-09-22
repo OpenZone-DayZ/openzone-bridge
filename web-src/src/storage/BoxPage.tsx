@@ -112,7 +112,7 @@ export function BoxPage({ id }: { id: string }) {
             <div className="row">
               <span className="muted small">{s('stuck_open')}</span>
               <Confirm warn label={s('mark_closed')} question={s('c_mark_closed')}
-                onConfirm={() => changed(api('storage', 'markClosed', { id }))} />
+                onConfirm={() => changed(api('storage', 'unstick', { id }))} />
             </div>
           ) : (
             <RestoreForm id={id} roots={roots.filter(Boolean).length} onDone={changed} />
@@ -120,7 +120,7 @@ export function BoxPage({ id }: { id: string }) {
           <div className="row">
             <span className="muted small">{s('mark_removed_hint')}</span>
             <Confirm warn label={s('mark_removed')} question={s('c_mark_removed')}
-              onConfirm={() => changed(api('storage', 'markRemoved', { id }))} />
+              onConfirm={() => changed(api('storage', 'archive', { id }))} />
           </div>
         </Panel>
       ) : <LivePanel box={box} onChanged={load} />}

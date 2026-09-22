@@ -299,7 +299,7 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
     // case that makes it safe: the server did not report the box at its last
     // boot, so no one in the game can be looking inside it. A box that IS in
     // the world keeps the game as the only authority -- use the live close.
-    markClosed: ({ id, admin, server }) => {
+    unstick: ({ id, admin, server }) => {
       const box = known(id);
       if (!box) return bad('unknown box');
       if (box.status !== 'open') return bad('the box is not open');
@@ -322,7 +322,7 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
     // longer an open one. The same rule guards it: only a box the server did
     // not report at its last boot. One that IS there must really be deleted,
     // by the live remove, or SQL would lie about a box players can still open.
-    markRemoved: ({ id, admin, server }) => {
+    archive: ({ id, admin, server }) => {
       const box = known(id);
       if (!box) return bad('unknown box');
       const gone = absent(box, server);

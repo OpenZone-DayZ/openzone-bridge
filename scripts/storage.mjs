@@ -194,13 +194,13 @@ switch (cmd) {
   }
   case 'mark-closed': {
     need(1, 'an id');
-    const r = await call('markClosed', { id: args[0] });
+    const r = await call('unstick', { id: args[0] });
     console.log(`SQL no longer believes it open; it is ${r.status} and can be worked on`);
     break;
   }
   case 'mark-removed': {
     need(1, 'an id');
-    const r = await call('markRemoved', { id: args[0] });
+    const r = await call('archive', { id: args[0] });
     console.log(`archived in SQL: it is ${r.status}, out of the live list, and everything it held is still readable and still restorable`);
     break;
   }

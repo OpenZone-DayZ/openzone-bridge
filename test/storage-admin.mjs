@@ -421,11 +421,11 @@ console.log('recovering a box the world lost');
   s.markOpen(LOST, '2026-09-19 13:00:02');
   ok('a stranded box stuck open cannot be poured out', rescue.restore({ id: LOST, to: HOME1, admin: 'tester' }), { ok: false, why: 'the box is open; close it first' });
   ok('the world says it is not there', rescue.box({ id: LOST, server: 'stand' }).box.in_world, 'no');
-  ok('so SQL can be told to stop believing it open', rescue.markClosed({ id: LOST, admin: 'tester', server: 'stand' }), { ok: true, status: 'closed' });
+  ok('so SQL can be told to stop believing it open', rescue.unstick({ id: LOST, admin: 'tester', server: 'stand' }), { ok: true, status: 'closed' });
   ok('and it leaves a trace of who did it', s.eventsOf(LOST)[0].kind, 'admin_mark_closed');
-  ok('doing it twice is refused', rescue.markClosed({ id: LOST, admin: 'tester', server: 'stand' }), { ok: false, why: 'the box is not open' });
+  ok('doing it twice is refused', rescue.unstick({ id: LOST, admin: 'tester', server: 'stand' }), { ok: false, why: 'the box is not open' });
   s.markOpen(HOME1, '2026-09-21 13:00:01');
-  ok('a box the world DOES have is left to the game', rescue.markClosed({ id: HOME1, admin: 'tester', server: 'stand' }), { ok: false, why: 'the box is in the world; close it with the live command instead' });
+  ok('a box the world DOES have is left to the game', rescue.unstick({ id: HOME1, admin: 'tester', server: 'stand' }), { ok: false, why: 'the box is in the world; close it with the live command instead' });
   s.markClosed(HOME1);
 
   // 40 cells take one plate of 25; the other two stay for the next box.
@@ -443,7 +443,7 @@ console.log('recovering a box the world lost');
   const WRITEOFF = '-304-304-304-304';
   s.ingestClose({ boxId: WRITEOFF, header: header('2026-09-19 13:00:00'), chunks: [plate(0), plate(1)], at: '2026-09-19 13:00:01' });
   s.markOpen(WRITEOFF, '2026-09-19 13:00:02');
-  ok('a stranded box is archived whatever shape it is stuck in', rescue.markRemoved({ id: WRITEOFF, admin: 'tester', server: 'stand' }), { ok: true, status: 'removed' });
+  ok('a stranded box is archived whatever shape it is stuck in', rescue.archive({ id: WRITEOFF, admin: 'tester', server: 'stand' }), { ok: true, status: 'removed' });
   ok('it keeps everything it held', [s.boxOf(WRITEOFF).status, s.currentChunks(WRITEOFF).chunks.length, s.itemsOf(WRITEOFF).length], ['removed', 2, 2]);
   ok('the page still opens it', rescue.box({ id: WRITEOFF, server: 'stand' }).ok, true);
   // A target with room of its own: HOME2 already took a plate above and has
@@ -452,12 +452,12 @@ console.log('recovering a box the world lost');
   s.ingestClose({ boxId: HOME3, header: header('2026-09-21 13:00:00'), chunks: [], at: '2026-09-21 13:00:01' });
   s.seen(HOME3, { at: '2026-09-21 13:00:01' });
   ok('and its cargo can still be poured out', rescue.restore({ id: WRITEOFF, to: HOME3, admin: 'tester' }).ok, true);
-  ok('archiving it twice is refused', rescue.markRemoved({ id: WRITEOFF, admin: 'tester', server: 'stand' }), { ok: false, why: 'unknown box' });
+  ok('archiving it twice is refused', rescue.archive({ id: WRITEOFF, admin: 'tester', server: 'stand' }), { ok: false, why: 'unknown box' });
   s.markOpen(HOME1, '2026-09-21 13:00:01');
-  ok('a box the world DOES have must really be deleted', rescue.markRemoved({ id: HOME1, admin: 'tester', server: 'stand' }), { ok: false, why: 'the box is in the world; remove it with the live command instead' });
+  ok('a box the world DOES have must really be deleted', rescue.archive({ id: HOME1, admin: 'tester', server: 'stand' }), { ok: false, why: 'the box is in the world; remove it with the live command instead' });
   s.markClosed(HOME1);
   const blind = storageAdmin({ store: s, xchg: x, push: () => {}, sizes, health: () => ({ servers: [] }) });
-  ok('and with no boot to judge by, neither op guesses', [blind.markRemoved({ id: HOME1, admin: 't' }).why, blind.markClosed({ id: HOME1, admin: 't' }).why],
+  ok('and with no boot to judge by, neither op guesses', [blind.archive({ id: HOME1, admin: 't' }).why, blind.unstick({ id: HOME1, admin: 't' }).why],
     ['no server has booted storage yet, so the world cannot be asked; try once one has', 'the box is not open']);
 }
 

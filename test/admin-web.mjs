@@ -185,6 +185,26 @@ console.log('web: a taken port');
   await first.close();
 }
 
+console.log('every op a kind exposes is reachable through the web');
+
+{
+  // The web checks an op's NAME before it looks it up, against a pattern of
+  // one lowercase word. An op named any other way is answered 'unknown op'
+  // and nothing says which -- the console reaches it, the site never can.
+  // That is how a working archive op shipped with a dead button on it
+  // (owner, 2026-09-22). Every kind's surface is checked here, so the next
+  // one cannot get out the same way.
+  const { storageAdmin } = await import('../src/storage-admin.js');
+  const stub = new Proxy({}, { get: () => () => ({ ok: true }) });
+  const surfaces = {
+    storage: storageAdmin({ store: stub, xchg: null, push: () => {}, health: () => ({ servers: [] }) }),
+  };
+  const web = /^[a-z]{1,32}$/;
+  for (const [kind, ops] of Object.entries(surfaces)) {
+    ok(`${kind}: every op is named the way the web accepts`, Object.keys(ops).filter((op) => !web.test(op)), []);
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 rmSync(dir, { recursive: true, force: true });
 rmSync(empty, { recursive: true, force: true });
