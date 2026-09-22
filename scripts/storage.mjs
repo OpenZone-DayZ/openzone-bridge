@@ -19,6 +19,7 @@
 //   node scripts/storage.mjs move <from> <root> <to>       (a root into another closed box, unplaced; the source may be deleted)
 //   node scripts/storage.mjs restore <stranded> <to>       (what a stranded box held, into a closed box; as much as fits)
 //   node scripts/storage.mjs mark-closed <id>              (a box SQL believes open that the world does not have)
+//   node scripts/storage.mjs mark-removed <id>             (archive a box the world lost, keeping everything it held)
 //   node scripts/storage.mjs edit <id> <root> <node> [qty=N] [health=N] [reset]
 //   node scripts/storage.mjs diff <a> <b>                  (classes that go and come from version a to b)
 //   node scripts/storage.mjs health
@@ -43,7 +44,7 @@ const [cmd, ...args] = process.argv.slice(2);
 const USAGE = `usage: node scripts/storage.mjs <command> [args]
   boxes | box <id> | history <id> [n] | player <steam64> [n] | find <class> | parked | version <n> | diff <a> <b> | health
   rollback <id> <version> | unpark <parkedId> | discard <parkedId> | give <id> <class> [qty] | empty <id>
-  shelve <id> <root> | move <from> <root> <to> | restore <stranded> <to> | mark-closed <id>
+  shelve <id> <root> | move <from> <root> <to> | restore <stranded> <to> | mark-closed <id> | mark-removed <id>
   edit <id> <root> <node> [qty=N] [health=N] [reset]
   close <id> | remove <id> | report <id> | result <ref>`;
 
@@ -195,6 +196,12 @@ switch (cmd) {
     need(1, 'an id');
     const r = await call('markClosed', { id: args[0] });
     console.log(`SQL no longer believes it open; it is ${r.status} and can be worked on`);
+    break;
+  }
+  case 'mark-removed': {
+    need(1, 'an id');
+    const r = await call('markRemoved', { id: args[0] });
+    console.log(`archived in SQL: it is ${r.status}, out of the live list, and everything it held is still readable and still restorable`);
     break;
   }
   case 'move': {

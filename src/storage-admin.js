@@ -118,6 +118,19 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
   // list beside it was printing at that very moment (owner, 2026-09-22).
   const archived = (id) => store.boxOf(String(id || '')) || null;
 
+  // The one rule that lets SQL decide a box's fate by itself: the server did
+  // not have it at its last boot. Anything else belongs to the game.
+  function absent(box, server) {
+    const seen = inWorld(server)(box);
+    if (seen.in_world === 'no') return { boot: seen.world_boot, why: '' };
+    return {
+      boot: seen.world_boot,
+      why: seen.in_world === 'yes'
+        ? 'the box is in the world; {live} it with the live command instead'
+        : 'no server has booted storage yet, so the world cannot be asked; try once one has',
+    };
+  }
+
   function live(cmd, id, admin) {
     if (!known(id)) return bad('unknown box');
     if (!push) return bad('no live channel');
@@ -290,16 +303,34 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
       const box = known(id);
       if (!box) return bad('unknown box');
       if (box.status !== 'open') return bad('the box is not open');
-      const seen = inWorld(server)(box);
-      if (seen.in_world !== 'no') {
-        return bad(seen.in_world === 'yes'
-          ? 'the box is in the world; close it with the live command instead'
-          : 'no server has booted storage yet, so the world cannot be asked; try once one has');
-      }
+      const gone = absent(box, server);
+      if (gone.why) return bad(gone.why.replace('{live}', 'close'));
       if (!store.markClosed(String(id || ''))) return bad('unknown box');
       dropCache(String(id));
-      record('admin_mark_closed', String(id), admin, `stuck open, absent from the world since ${seen.world_boot}`);
+      record('admin_mark_closed', String(id), admin, `stuck open, absent from the world since ${gone.boot}`);
       return { ok: true, status: 'closed' };
+    },
+
+    // Archiving a box the world lost. The live remove deletes an entity and
+    // then writes this down; for a box the game no longer has there is no
+    // entity to delete, so that road ends in silence and the box sits in the
+    // live list for ever. This writes it down on its own.
+    //
+    // Nothing is thrown away: archiving is a status, and the versions, items
+    // and events stay exactly as restore will want them. It works whatever
+    // shape the box is stuck in, open included, since a removed box is no
+    // longer an open one. The same rule guards it: only a box the server did
+    // not report at its last boot. One that IS there must really be deleted,
+    // by the live remove, or SQL would lie about a box players can still open.
+    markRemoved: ({ id, admin, server }) => {
+      const box = known(id);
+      if (!box) return bad('unknown box');
+      const gone = absent(box, server);
+      if (gone.why) return bad(gone.why.replace('{live}', 'remove'));
+      store.removed(String(id || ''));
+      dropCache(String(id));
+      record('admin_mark_removed', String(id), admin, `was ${box.status}, absent from the world since ${gone.boot}`);
+      return { ok: true, status: 'removed' };
     },
 
     edit: ({ id, root, node, quantity, health: hp, reset, admin }) => {

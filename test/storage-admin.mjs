@@ -436,6 +436,29 @@ console.log('recovering a box the world lost');
   ok('the next box takes the next one', [second.roots, second.left], [1, 1]);
   ok('a full target is refused with what it would need', rescue.restore({ id: LOST, to: HOME1, admin: 'tester' }).why, 'no room: 15 cell(s) free in the target, its smallest root needs 25');
   ok('and the last root is still waiting, not lost', s.currentChunks(LOST).chunks.length, 1);
+
+  // Writing a stranded box off. The live remove deletes an entity and then
+  // records it; with no entity there is nothing to delete, so SQL records it
+  // alone -- and keeps every row, because that is what the archive is.
+  const WRITEOFF = '-304-304-304-304';
+  s.ingestClose({ boxId: WRITEOFF, header: header('2026-09-19 13:00:00'), chunks: [plate(0), plate(1)], at: '2026-09-19 13:00:01' });
+  s.markOpen(WRITEOFF, '2026-09-19 13:00:02');
+  ok('a stranded box is archived whatever shape it is stuck in', rescue.markRemoved({ id: WRITEOFF, admin: 'tester', server: 'stand' }), { ok: true, status: 'removed' });
+  ok('it keeps everything it held', [s.boxOf(WRITEOFF).status, s.currentChunks(WRITEOFF).chunks.length, s.itemsOf(WRITEOFF).length], ['removed', 2, 2]);
+  ok('the page still opens it', rescue.box({ id: WRITEOFF, server: 'stand' }).ok, true);
+  // A target with room of its own: HOME2 already took a plate above and has
+  // 15 cells left, less than a plate needs.
+  const HOME3 = '-305-305-305-305';
+  s.ingestClose({ boxId: HOME3, header: header('2026-09-21 13:00:00'), chunks: [], at: '2026-09-21 13:00:01' });
+  s.seen(HOME3, { at: '2026-09-21 13:00:01' });
+  ok('and its cargo can still be poured out', rescue.restore({ id: WRITEOFF, to: HOME3, admin: 'tester' }).ok, true);
+  ok('archiving it twice is refused', rescue.markRemoved({ id: WRITEOFF, admin: 'tester', server: 'stand' }), { ok: false, why: 'unknown box' });
+  s.markOpen(HOME1, '2026-09-21 13:00:01');
+  ok('a box the world DOES have must really be deleted', rescue.markRemoved({ id: HOME1, admin: 'tester', server: 'stand' }), { ok: false, why: 'the box is in the world; remove it with the live command instead' });
+  s.markClosed(HOME1);
+  const blind = storageAdmin({ store: s, xchg: x, push: () => {}, sizes, health: () => ({ servers: [] }) });
+  ok('and with no boot to judge by, neither op guesses', [blind.markRemoved({ id: HOME1, admin: 't' }).why, blind.markClosed({ id: HOME1, admin: 't' }).why],
+    ['no server has booted storage yet, so the world cannot be asked; try once one has', 'the box is not open']);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
