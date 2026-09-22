@@ -312,6 +312,44 @@ console.log('a deleted box is still readable');
   ok('and no root can be shelved off it', admin.shelve({ id: GONE, root: 0, admin: 'tester' }), { ok: false, why: 'unknown box' });
 }
 
+console.log('versions belong to one box');
+
+{
+  // Version ids come from one sequence for the whole database, so two boxes
+  // interleave in the numbering -- but every version carries the box it was
+  // made for, and nothing crosses. A rollback never rewinds: it writes a NEW
+  // version holding what the old one held, so the history only grows.
+  const ONE = '-201-201-201-201';
+  const TWO = '-202-202-202-202';
+  s.ingestClose({ boxId: ONE, header: header('2026-09-19 12:00:00'), chunks: [c0], at: '2026-09-19 12:00:01' });
+  s.ingestClose({ boxId: TWO, header: header('2026-09-19 12:00:00'), chunks: [c0, c1], at: '2026-09-19 12:00:01' });
+  const oneV1 = s.boxOf(ONE).current_version;
+  const twoV1 = s.boxOf(TWO).current_version;
+
+  s.give(ONE, 'Rag', 1, { at: '2026-09-19 12:01:00' });
+  const oneV2 = s.boxOf(ONE).current_version;
+  ok('a version of one box is not a version of the other', s.rollback(TWO, oneV2, { admin: 'tester' }), { ok: false, why: 'no such version of this box' });
+
+  const twoRootsBefore = s.currentChunks(TWO).chunks.length;
+  const back = s.rollback(ONE, oneV1, { admin: 'tester' });
+  ok('rolling one box back succeeds', back.ok, true);
+  ok('and writes a new version rather than rewinding', back.version > oneV2, true);
+  ok('the rolled box holds what that version held', s.currentChunks(ONE).chunks.length, 1);
+  ok('the other box does not move', [s.boxOf(TWO).current_version, s.currentChunks(TWO).chunks.length], [twoV1, twoRootsBefore]);
+  ok('nor does its index', s.itemsOf(TWO).length, 3);
+  ok('and the version it was rolled back FROM is still there', s.versionsOf(ONE, 50).some((v) => v.id === oneV2), true);
+
+  // The bytes of a root are shared between boxes by their hash, so the two
+  // boxes above point at one blob row. That sharing must never let one box's
+  // clean-up take bytes another still needs.
+  const held = base.db.prepare('SELECT COUNT(DISTINCT v.box_id) n FROM storage_roots r JOIN storage_versions v ON v.id = r.version_id WHERE r.hash = ?');
+  const hash = base.db.prepare('SELECT hash FROM storage_roots WHERE version_id = ?').get(twoV1).hash;
+  ok('one blob is shared by both boxes', held.get(hash).n > 1, true);
+  s.keep({ versionsDays: 0, eventsDays: 0, now: new Date('2027-01-01T00:00:00Z') });
+  ok('a sweep keeps every box its current version', [s.currentChunks(ONE).chunks.length, s.currentChunks(TWO).chunks.length], [1, twoRootsBefore]);
+  ok('and the shared bytes survive it', !!base.db.prepare('SELECT 1 FROM storage_blobs WHERE hash = ?').get(hash), true);
+}
+
 console.log('un-archiving a deleted box into a living one');
 
 {
