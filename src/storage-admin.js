@@ -218,6 +218,32 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
       return r;
     },
 
+    // Un-archiving. The cargo of a deleted box poured into one that exists:
+    // the admin names the target, and its next open carries everything. The
+    // room is checked here, before a version is made, for the same reason a
+    // give is -- what does not fit would only be parked at the open.
+    restore: ({ id, to, admin, server }) => {
+      const from = archived(id);
+      if (!from) return bad('unknown box');
+      const target = known(to);
+      if (!target) return bad('unknown target box');
+      const map = sizesFor(server);
+      if (map) {
+        const have = cellsOf(target.class, store.itemsOf(target.box_id), map);
+        const coming = cellsOf(target.class, store.itemsOf(from.box_id), map);
+        if (have.max > 0 && have.used + coming.used > have.max) {
+          return bad(`no room: ${have.max - have.used} cell(s) free in the target, the archive needs ${coming.used}`);
+        }
+      }
+      const r = store.restoreBox(String(id || ''), String(to || ''), { admin });
+      if (!r.ok) return r;
+      dropCache(String(id));
+      dropCache(String(to));
+      record('admin_restore', String(id), admin, `${r.roots} root(s) into ${to}, version ${r.fromVersion}`);
+      record('admin_restore', String(to), admin, `${r.roots} root(s) from ${id}, version ${r.toVersion}`);
+      return r;
+    },
+
     edit: ({ id, root, node, quantity, health: hp, reset, admin }) => {
       const doReset = reset === true || reset === 1 || reset === 'true' || reset === '1';
       const r = store.editNode(String(id || ''), Number(root), Number(node), { quantity, health: hp, reset: doReset }, { admin });

@@ -141,8 +141,11 @@ ok('the index of both boxes follows', [s.itemsOf(BOX).length, s.itemsOf(BOX2).le
 ok('a move into the same box is refused', s.moveRoot(BOX, 0, BOX), { ok: false, why: 'the same box' });
 ok('a move of a root that is not there is refused', s.moveRoot(BOX, 5, BOX2), { ok: false, why: 'no such root of this box' });
 s.markOpen(BOX2);
-ok('a move needs both boxes closed', s.moveRoot(BOX, 0, BOX2), { ok: false, why: 'both boxes must be closed' });
+ok('a move into an open box says which box is open', s.moveRoot(BOX, 0, BOX2), { ok: false, why: 'the target box is open; close it first' });
 s.markClosed(BOX2);
+s.markOpen(BOX);
+ok('and a move out of an open box says the same of the source', s.moveRoot(BOX, 0, BOX2), { ok: false, why: 'the box is open; close it first' });
+s.markClosed(BOX);
 ok('a move into an unknown box is refused', s.moveRoot(BOX, 0, '9-9-9-9'), { ok: false, why: 'unknown target box' });
 ok('a move out of an unknown box is refused', s.moveRoot('9-9-9-9', 0, BOX), { ok: false, why: 'unknown box' });
 
@@ -307,6 +310,44 @@ console.log('a deleted box is still readable');
   // Writing to it stays refused: there is no entity in the game to change.
   ok('but nothing can be given to it', admin.give({ id: GONE, type: 'Rag', qty: 1, admin: 'tester' }).ok, false);
   ok('and no root can be shelved off it', admin.shelve({ id: GONE, root: 0, admin: 'tester' }), { ok: false, why: 'unknown box' });
+}
+
+console.log('un-archiving a deleted box into a living one');
+
+{
+  // The engine's id never returns, so a restore always lands in another
+  // box. The cargo MOVES: the archive is left holding nothing, or one
+  // archive poured twice would mint items.
+  const GONE2 = '-888-888-888-888';
+  const HOME = '-999-999-999-999';
+  s.ingestClose({ boxId: GONE2, header: header('2026-09-19 11:00:00'), chunks: [c0, c1], at: '2026-09-19 11:00:01' });
+  s.ingestClose({ boxId: HOME, header: header('2026-09-19 11:00:00'), chunks: [c0], at: '2026-09-19 11:00:01' });
+  const held = s.currentChunks(GONE2).chunks.length;
+  s.removed(GONE2, '2026-09-19 11:01:00');
+
+  ok('a restore needs a target that exists', admin.restore({ id: GONE2, to: 'no-such-box', admin: 'tester' }), { ok: false, why: 'unknown target box' });
+  ok('and will not pour a box into itself', admin.restore({ id: GONE2, to: GONE2, admin: 'tester' }), { ok: false, why: 'unknown target box' });
+
+  const before = s.currentChunks(HOME).chunks.length;
+  const r = admin.restore({ id: GONE2, to: HOME, admin: 'tester' });
+  ok('the archive is poured into the living box', [r.ok, r.roots], [true, held]);
+  ok('which now holds what it had plus what came', s.currentChunks(HOME).chunks.length, before + held);
+  ok('the archive is left with nothing', s.currentChunks(GONE2).chunks.length, 0);
+  ok('and is still an archive, not a live box again', s.boxOf(GONE2).status, 'removed');
+  ok('its deletion time is untouched', s.boxOf(GONE2).removed_at, '2026-09-19 11:01:00');
+  ok('pouring the same archive twice gives nothing the second time', admin.restore({ id: GONE2, to: HOME, admin: 'tester' }), { ok: false, why: 'there is nothing in it to restore' });
+  ok('both sides record who did it', [s.eventsOf(HOME)[0].kind, s.eventsOf(GONE2)[0].kind, s.eventsOf(HOME)[0].admin], ['admin_restore', 'admin_restore', 'tester']);
+  ok('what it held before the restore is still readable', s.versionsOf(GONE2, 20).length > 1, true);
+
+  // One root at a time out of an archive, the same way as between two
+  // living boxes.
+  const GONE3 = '-101-101-101-101';
+  s.ingestClose({ boxId: GONE3, header: header('2026-09-19 11:10:00'), chunks: [c0, c1], at: '2026-09-19 11:10:01' });
+  s.removed(GONE3, '2026-09-19 11:11:00');
+  const one = admin.move({ from: GONE3, root: 0, to: HOME, admin: 'tester' });
+  ok('a single root can be taken out of an archive', [one.ok, one.type], [true, 'Paper']);
+  ok('the archive keeps the rest and stays deleted', [s.currentChunks(GONE3).chunks.length, s.boxOf(GONE3).status], [1, 'removed']);
+  ok('a deleted box is never a target', admin.move({ from: HOME, root: 0, to: GONE3, admin: 'tester' }), { ok: false, why: 'unknown target box' });
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

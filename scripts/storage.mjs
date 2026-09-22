@@ -16,7 +16,8 @@
 //   node scripts/storage.mjs give <id> <class> [qty]
 //   node scripts/storage.mjs empty <id>
 //   node scripts/storage.mjs shelve <id> <root>            (a root of a closed box onto the shelf)
-//   node scripts/storage.mjs move <from> <root> <to>       (a root into another closed box, unplaced)
+//   node scripts/storage.mjs move <from> <root> <to>       (a root into another closed box, unplaced; the source may be deleted)
+//   node scripts/storage.mjs restore <deleted> <to>        (everything a deleted box held, into a closed box)
 //   node scripts/storage.mjs edit <id> <root> <node> [qty=N] [health=N] [reset]
 //   node scripts/storage.mjs diff <a> <b>                  (classes that go and come from version a to b)
 //   node scripts/storage.mjs health
@@ -41,7 +42,7 @@ const [cmd, ...args] = process.argv.slice(2);
 const USAGE = `usage: node scripts/storage.mjs <command> [args]
   boxes | box <id> | history <id> [n] | player <steam64> [n] | find <class> | parked | version <n> | diff <a> <b> | health
   rollback <id> <version> | unpark <parkedId> | discard <parkedId> | give <id> <class> [qty] | empty <id>
-  shelve <id> <root> | move <from> <root> <to> | edit <id> <root> <node> [qty=N] [health=N] [reset]
+  shelve <id> <root> | move <from> <root> <to> | restore <deleted> <to> | edit <id> <root> <node> [qty=N] [health=N] [reset]
   close <id> | remove <id> | report <id> | result <ref>`;
 
 if (!cmd || cmd === 'help' || cmd === '--help') {
@@ -179,6 +180,12 @@ switch (cmd) {
     need(2, 'an id and a root index');
     const r = await call('shelve', { id: args[0], root: args[1] });
     console.log(`${r.type} is on the shelf as parked ${r.parked}; the box is at version ${r.version}`);
+    break;
+  }
+  case 'restore': {
+    need(2, 'the id of the deleted box and the id of a closed box to pour it into');
+    const r = await call('restore', { id: args[0], to: args[1] });
+    console.log(`${r.roots} root(s) restored: ${args[0]} is at version ${r.fromVersion} and now holds nothing, ${args[1]} at version ${r.toVersion}; the cargo appears at its next open`);
     break;
   }
   case 'move': {

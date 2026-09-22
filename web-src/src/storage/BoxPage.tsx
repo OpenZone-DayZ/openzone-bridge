@@ -97,7 +97,12 @@ export function BoxPage({ id }: { id: string }) {
       {form}
 
       {box.status === 'removed'
-        ? <Panel tight title={s('archived_title')}><Notice tone="alert">{s('archived_text', { when: box.removed_at || '' })}</Notice></Panel>
+        ? (
+          <Panel tight title={s('archived_title')}>
+            <Notice tone="alert">{s('archived_text', { when: box.removed_at || '' })}</Notice>
+            <RestoreForm id={id} roots={roots.filter(Boolean).length} onDone={changed} />
+          </Panel>
+        )
         : box.in_world === 'no'
           ? <Panel tight title={s('live_title')}><Notice tone="alert">{s('absent_text', { since: box.world_boot || '' })}</Notice></Panel>
           : <LivePanel box={box} onChanged={load} />}
@@ -282,6 +287,39 @@ function MoveForm({ id, rootIdx, node, onDone, onClose }: { id: string; rootIdx:
         <button type="button" className="ghost" onClick={onClose}>{s('close')}</button>
       </div>
     </Panel>
+  );
+}
+
+// Un-archiving, on the page of the deleted box itself. The engine's id
+// never returns, so the cargo goes into a box that exists: the target is
+// picked from the closed ones rather than typed, because an id is 40-odd
+// characters of digits and signs. The cargo MOVES -- once poured, this
+// archive holds nothing, and the wording says so before the click.
+function RestoreForm({ id, roots, onDone }: { id: string; roots: number; onDone: OnDone }) {
+  const { s } = useLang();
+  const [boxes, setBoxes] = useState<Box[] | null>(null);
+  const [to, setTo] = useState('');
+  useEffect(() => {
+    api<{ boxes: Box[] }>('storage', 'boxes').then((r) => setBoxes(r.ok ? r.boxes : []));
+  }, []);
+  if (roots === 0) return <p className="muted small">{s('b_restore_empty')}</p>;
+  const targets = (boxes || []).filter((b) => b.status === 'closed' && b.box_id !== id);
+  if (boxes && targets.length === 0) return <p className="muted small">{s('b_restore_none')}</p>;
+  return (
+    <div className="row">
+      <Field label={s('b_restore_into')}>
+        <select className="mono" value={to} onChange={(e) => setTo(e.target.value)}>
+          <option value="">{'—'}</option>
+          {targets.map((b) => (
+            <option key={b.box_id} value={b.box_id}>
+              {b.box_id} ({SIZES[b.class] ? s(SIZES[b.class].key) : b.class}, {b.roots ?? 0})
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Confirm primary disabled={!to} label={s('b_restore')} question={s('b_c_restore', { n: roots, to })}
+        onConfirm={() => onDone(api('storage', 'restore', { id, to }))} />
+    </div>
   );
 }
 

@@ -573,10 +573,15 @@ export class StorageStore {
   moveRoot(fromId, rootIdx, toId, { at = stampNow(), admin = '' } = {}) {
     if (fromId === toId) return { ok: false, why: 'the same box' };
     const from = this.boxOf(fromId);
-    if (!from || from.status === 'removed') return { ok: false, why: 'unknown box' };
+    if (!from) return { ok: false, why: 'unknown box' };
     const to = this.boxOf(toId);
     if (!to || to.status === 'removed') return { ok: false, why: 'unknown target box' };
-    if (from.status !== 'closed' || to.status !== 'closed') return { ok: false, why: 'both boxes must be closed' };
+    // The SOURCE may be an archive: taking a root out of a deleted box is
+    // the only way its cargo ever reaches the world again, and nothing in
+    // the game has to exist for it. The TARGET must be a real closed box,
+    // because that is what the player will open.
+    if (from.status === 'open') return { ok: false, why: 'the box is open; close it first' };
+    if (to.status !== 'closed') return { ok: false, why: 'the target box is open; close it first' };
     const cur = this.currentChunks(fromId);
     if (!cur || !Number.isInteger(rootIdx) || rootIdx < 0 || rootIdx >= cur.chunks.length) return { ok: false, why: 'no such root of this box' };
     const chunk = cur.chunks[rootIdx];
@@ -591,7 +596,48 @@ export class StorageStore {
       const b = this.#newVersion(toId, [...targetChunks, unplace(chunk)], {
         at, source: 'admin', saveVer: this.#saveVerFor(toId, target ? target.saveVer : 0, cur.saveVer), note: `move ${type} from ${fromId}${who}`,
       });
+      // #newVersion marks the box it writes to as closed. A deleted source
+      // must not come back to life because something was taken out of it.
+      if (from.status === 'removed') this.q.boxRemoved.run(from.removed_at || at, fromId);
       return { ok: true, fromVersion: a.version, toVersion: b.version, type };
+    });
+  }
+
+  // Un-archiving: everything a box held, poured into a box that exists.
+  //
+  // The deleted box itself never comes back. Its id is the engine's own
+  // persistent id, and the entity behind it is gone -- so a restore always
+  // lands somewhere else, in a closed box the admin picks, whose next open
+  // carries the archived cargo.
+  //
+  // The cargo MOVES, it is not copied: the archive is left with a version
+  // holding nothing. Copying would let one archive be poured twice and mint
+  // items out of nothing. The history stays either way -- the older versions
+  // still show what the box held, and what was restored, when and by whom.
+  restoreBox(fromId, toId, { at = stampNow(), admin = '' } = {}) {
+    if (fromId === toId) return { ok: false, why: 'the same box' };
+    const from = this.boxOf(fromId);
+    if (!from) return { ok: false, why: 'unknown box' };
+    const to = this.boxOf(toId);
+    if (!to || to.status === 'removed') return { ok: false, why: 'unknown target box' };
+    if (from.status === 'open') return { ok: false, why: 'the box is open; close it first' };
+    if (to.status !== 'closed') return { ok: false, why: 'the target box is open; close it first' };
+    const cur = this.currentChunks(fromId);
+    if (!cur || cur.chunks.length === 0) return { ok: false, why: 'there is nothing in it to restore' };
+    const target = this.currentChunks(toId);
+    const targetChunks = target ? target.chunks : [];
+    const roots = cur.chunks.length;
+    const who = admin ? ` by ${admin}` : '';
+    return this.#tx(() => {
+      const a = this.#newVersion(fromId, [], {
+        at, source: 'admin', saveVer: cur.saveVer, note: `restored ${roots} root(s) into ${toId}${who}`,
+      });
+      const b = this.#newVersion(toId, [...targetChunks, ...cur.chunks.map(unplace)], {
+        at, source: 'admin', saveVer: this.#saveVerFor(toId, target ? target.saveVer : 0, cur.saveVer),
+        note: `restored ${roots} root(s) from ${fromId}${who}`,
+      });
+      if (from.status === 'removed') this.q.boxRemoved.run(from.removed_at || at, fromId);
+      return { ok: true, roots, fromVersion: a.version, toVersion: b.version };
     });
   }
 
