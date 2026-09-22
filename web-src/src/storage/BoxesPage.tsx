@@ -22,7 +22,14 @@ export function BoxesPage() {
   const [boxes, setBoxes] = useState<Box[] | null>(null);
   const [why, setWhy] = useState('');
   const [q, setQ] = useState('');
+  // Two questions, two filters. They used to be one, and its default was
+  // labelled "In the world" while it actually meant "not deleted" -- so the
+  // list showed three boxes under that heading, each wearing a "not in the
+  // world" badge (owner, 2026-09-22). Status is what SQL holds; presence is
+  // what the server reported at its last boot. A box can be closed and
+  // absent, or removed and still remembered.
   const [status, setStatus] = useState('live');
+  const [world, setWorld] = useState('');
   const [size, setSize] = useState('');
 
   useEffect(() => {
@@ -35,11 +42,12 @@ export function BoxesPage() {
     return boxes.filter((b) => {
       if (status === 'live' && b.status === 'removed') return false;
       if (status !== 'live' && status !== 'all' && b.status !== status) return false;
+      if (world && (b.in_world || 'unknown') !== world) return false;
       if (size && b.class !== size) return false;
       if (needle && !`${b.box_id} ${b.class} ${b.placed_by} ${b.pos}`.toLowerCase().includes(needle)) return false;
       return true;
     });
-  }, [boxes, q, status, size]);
+  }, [boxes, q, status, world, size]);
 
   const sizeName = (cls: string) => (SIZES[cls] ? s(SIZES[cls].key) : cls);
   const cols: Col<Box>[] = [
@@ -59,12 +67,18 @@ export function BoxesPage() {
       <h1>{s('nav_boxes')}</h1>
       <div className="toolbar">
         <input className="grow" placeholder={s('search_boxes')} value={q} onChange={(e) => setQ(e.target.value)} />
-        <select value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="live">{s('f_live')}</option>
+        <select value={status} onChange={(e) => setStatus(e.target.value)} title={s('f_status')}>
+          <option value="live">{s('f_kept')}</option>
           <option value="open">{s('st_open')}</option>
           <option value="closed">{s('st_closed')}</option>
           <option value="removed">{s('st_removed')}</option>
-          <option value="all">{s('all')}</option>
+          <option value="all">{s('f_any_status')}</option>
+        </select>
+        <select value={world} onChange={(e) => setWorld(e.target.value)} title={s('f_world')}>
+          <option value="">{s('f_any_world')}</option>
+          <option value="yes">{s('f_world_yes')}</option>
+          <option value="no">{s('f_world_no')}</option>
+          <option value="unknown">{s('f_world_unknown')}</option>
         </select>
         <select value={size} onChange={(e) => setSize(e.target.value)}>
           <option value="">{s('all_sizes')}</option>

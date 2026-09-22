@@ -96,9 +96,11 @@ export function BoxPage({ id }: { id: string }) {
       </div>
       {form}
 
-      {box.in_world === 'no' && box.status !== 'removed'
-        ? <Panel tight title={s('live_title')}><Notice tone="alert">{s('absent_text', { since: box.world_boot || '' })}</Notice></Panel>
-        : <LivePanel box={box} onChanged={load} />}
+      {box.status === 'removed'
+        ? <Panel tight title={s('archived_title')}><Notice tone="alert">{s('archived_text', { when: box.removed_at || '' })}</Notice></Panel>
+        : box.in_world === 'no'
+          ? <Panel tight title={s('live_title')}><Notice tone="alert">{s('absent_text', { since: box.world_boot || '' })}</Notice></Panel>
+          : <LivePanel box={box} onChanged={load} />}
 
       <h2>{s('grid')}</h2>
       <Grid box={box} items={items} roots={roots} hit={hit} index={held.index} />

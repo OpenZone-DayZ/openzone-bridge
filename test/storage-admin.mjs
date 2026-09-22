@@ -286,6 +286,29 @@ console.log('cells and give against the server\'s sizes');
   ok('without sizes nothing is refused', storageAdmin({ store: s, xchg: x, push: () => {}, health: () => ({ servers: [] }) }).give({ id: BOX, type: 'Tent', qty: 0, admin: 'tester' }).ok, true);
 }
 
+console.log('a deleted box is still readable');
+
+{
+  // The archive. Removing a box keeps every row it had; the only thing that
+  // changes is the status. Reading it was gated behind the same check the
+  // WRITING operations use, so the page answered 'unknown box' for a box the
+  // list beside it was printing in full (owner, 2026-09-22).
+  const GONE = '-777-777-777-777';
+  s.ingestClose({ boxId: GONE, header: header('2026-09-19 10:00:00'), chunks: [c0, c1], at: '2026-09-19 10:00:01' });
+  const versionsBefore = s.versionsOf(GONE, 20).length;
+  s.removed(GONE, '2026-09-19 10:05:00');
+
+  const read = admin.box({ id: GONE });
+  ok('the box page opens a deleted box', [read.ok, read.box.status, read.items.length > 0], [true, 'removed', true]);
+  ok('and keeps every version it had', admin.box({ id: GONE }).versions.length, versionsBefore);
+  ok('its history opens too', admin.history({ id: GONE }).ok, true);
+  ok('an id SQL never saw is still unknown', admin.box({ id: '9-9-9-9' }), { ok: false, why: 'unknown box' });
+
+  // Writing to it stays refused: there is no entity in the game to change.
+  ok('but nothing can be given to it', admin.give({ id: GONE, type: 'Rag', qty: 1, admin: 'tester' }).ok, false);
+  ok('and no root can be shelved off it', admin.shelve({ id: GONE, root: 0, admin: 'tester' }), { ok: false, why: 'unknown box' });
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();
 rmSync(dir, { recursive: true, force: true });

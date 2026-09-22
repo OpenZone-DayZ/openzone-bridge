@@ -221,8 +221,22 @@ function serverBooted(id, kind, at = new Date()) {
   saveServerKinds();
   if (first) console.log(`[bridge] ${id} runs ${kind}`);
 }
-// What the site's server switch and the health pages show.
-const serversInfo = () => [...lastPoll].map(([id, at]) => ({ id, at, since: serverKinds.get(id)?.since || '', kinds: { ...(serverKinds.get(id)?.kinds || {}) } }));
+// What the site's server switch and the health pages show: every server the
+// bridge REMEMBERS, not only the ones that have polled since it started.
+// Listing only lastPoll threw away the very memory loadServerKinds had just
+// read back: with the game server down, a restarted bridge reported no
+// servers, so the boxes page could not name a boot to judge presence against
+// and every box read "world unknown" (measured 2026-09-22). `at` empty is
+// the honest way to say "remembered, but silent since the bridge started".
+const serversInfo = () => {
+  const ids = new Set([...lastPoll.keys(), ...serverKinds.keys()]);
+  return [...ids].map((id) => ({
+    id,
+    at: lastPoll.get(id) || '',
+    since: serverKinds.get(id)?.since || '',
+    kinds: { ...(serverKinds.get(id)?.kinds || {}) },
+  }));
+};
 // A boot route wrapped so an accepted boot marks the kind on its server.
 // The time is taken before the letter is handled: whatever the handler
 // stamps as seen (storage-store.js, boot) is then at or after it, and a

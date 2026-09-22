@@ -86,11 +86,20 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
   const record = (kind, boxId, admin, note) => {
     store.events([{ at: stampNow(), kind, box: boxId, admin: String(admin || ''), note }], 'admin');
   };
+  // For the ops that CHANGE a box: a removed box is not a target, and
+  // neither is one SQL never heard of.
   const known = (id) => {
     const box = store.boxOf(String(id || ''));
     if (!box || box.status === 'removed') return null;
     return box;
   };
+
+  // For the ops that only READ one. A removed box IS the archive -- its
+  // versions, items and events are kept on purpose -- so reading it is the
+  // whole point of keeping the row. Sharing the write gate answered
+  // 'unknown box' for a box whose id, class, 853 items and version 3356 the
+  // list beside it was printing at that very moment (owner, 2026-09-22).
+  const archived = (id) => store.boxOf(String(id || '')) || null;
 
   function live(cmd, id, admin) {
     if (!known(id)) return bad('unknown box');
@@ -107,14 +116,14 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
     boxes: ({ server } = {}) => ({ ok: true, boxes: store.boxes().map(inWorld(server)) }),
 
     box: ({ id, server }) => {
-      const box = known(id);
+      const box = archived(id);
       if (!box) return bad('unknown box');
       const items = store.itemsOf(box.box_id);
       return { ok: true, box: { ...inWorld(server)(box), cells: cellsOf(box.class, items, sizesFor(server)) }, items, versions: store.versionsOf(box.box_id, 20) };
     },
 
     history: ({ id, limit }) => {
-      const box = known(id);
+      const box = archived(id);
       if (!box) return bad('unknown box');
       const n = limitOf(limit);
       return { ok: true, events: store.eventsOf(box.box_id, n), versions: store.versionsOf(box.box_id, n) };
