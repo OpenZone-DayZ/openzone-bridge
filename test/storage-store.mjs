@@ -140,6 +140,63 @@ ok('events by box, newest first', s.eventsOf('5-6-7-8').map((e) => [e.kind, e.ty
   [['removed', '', 0, '', 'stand'], ['take', 'AKM', 1, 'mag=30', 'stand'], ['put', 'AKM', 1, '', 'stand'], ['placed', 'OZ_StorageBox_Small', 0, '4650 339 10400', 'stand']]);
 ok('events by player', s.eventsBy('76561198000000002').map((e) => e.kind), ['take', 'put', 'placed']);
 
+console.log('turns of a proxy session (design 2026-09-24 section 7)');
+
+// A box of four loose roots to shuffle about.
+const T = '9-9-9-9';
+const t0 = buildChunk([paper(0, 0)]);
+const t1 = buildChunk([paper(0, 1)]);
+const t2 = buildChunk([paper(0, 2)]);
+const t3 = buildChunk([paper(0, 3)]);
+s.boot([{ id: T, class: 'OZ_StorageBox_Small', state: 'CLOSED', entities: 0, pos: '1 2 3' }]);
+const tBase = s.ingestClose({ boxId: T, header: header('2026-09-24 10:00:00'), chunks: [t0, t1, t2, t3] });
+ok('the box starts with four roots', [tBase.roots, tBase.entities], [4, 4]);
+
+// One root moved: its chunk is replaced in place.
+const moved = buildChunk([paper(5, 5)]);
+const turn1 = s.applyOps({ boxId: T, chunks: [moved], rewrite: [1], adds: 0 });
+ok('a rewrite keeps the count', [turn1.roots, turn1.entities], [4, 4]);
+ok('and forks the version once', turn1.version !== tBase.version, true);
+ok('the moved root is the one that changed', s.currentChunks(T).chunks.map(hex), [hex(t0), hex(moved), hex(t2), hex(t3)]);
+ok('the item rows follow it', s.itemsOf(T).map((i) => [i.root_idx, i.row, i.col]), [[0, 0, 0], [1, 5, 5], [2, 0, 2], [3, 0, 3]]);
+ok('history kept what the session started from', s.versionsOf(T).length, 2);
+
+// A second turn of the same session mutates the fork rather than forking again.
+const moved2 = buildChunk([paper(6, 6)]);
+const turn2 = s.applyOps({ boxId: T, chunks: [moved2], rewrite: [3], adds: 0 });
+ok('the same session keeps one version', [turn2.version === turn1.version, s.versionsOf(T).length], [true, 2]);
+
+// An item taken out: the root leaves and the rest close up, on both sides.
+const turn3 = s.applyOps({ boxId: T, chunks: [], rewrite: [], drop: [0], adds: 0 });
+ok('a drop shortens the record', [turn3.roots, turn3.entities], [3, 3]);
+ok('and renumbers what is left', s.currentChunks(T).chunks.map(hex), [hex(moved), hex(t2), hex(moved2)]);
+
+// An item put in joins the end.
+const arrived = buildChunk(pouch);
+const turn4 = s.applyOps({ boxId: T, chunks: [arrived], rewrite: [], adds: 1 });
+ok('an addition joins the end', [turn4.roots, turn4.entities], [4, 5]);
+ok('with its whole subtree', s.itemsOf(T).filter((i) => i.root_idx === 3).map((i) => i.type), ['PlateCarrierPouches', 'SmallProtectorCase']);
+
+// A rewrite and an addition in one letter, the file's order: rewrites first.
+const turn5 = s.applyOps({ boxId: T, chunks: [t1, t3], rewrite: [0], adds: 1 });
+ok('one letter can do both', s.currentChunks(T).chunks.map(hex), [hex(t1), hex(t2), hex(moved2), hex(arrived), hex(t3)]);
+ok('and the counts follow', [turn5.roots, turn5.entities], [5, 6]);
+
+// What must be refused.
+const refused = (what, fn) => { try { fn(); ok(what, 'no refusal', 'a refusal'); } catch (e) { ok(what, true, true); } };
+refused('a position that is not in the record', () => s.applyOps({ boxId: T, chunks: [t0], rewrite: [99], adds: 0 }));
+refused('a letter whose file holds the wrong number of roots', () => s.applyOps({ boxId: T, chunks: [t0, t1], rewrite: [0], adds: 0 }));
+refused('a box with no record at all', () => s.applyOps({ boxId: 'nobody', chunks: [], drop: [0] }));
+ok('a refusal changed nothing', s.currentChunks(T).chunks.map(hex), [hex(t1), hex(t2), hex(moved2), hex(arrived), hex(t3)]);
+
+// A close after a session starts a fresh history entry, and the next session
+// forks again.
+s.ingestClose({ boxId: T, header: header('2026-09-24 11:00:00'), chunks: [t0] });
+const after = s.applyOps({ boxId: T, chunks: [t1], rewrite: [0], adds: 0 });
+ok('a session after a close forks again', s.versionsOf(T).length, 4);
+ok('and reads the close it started from', s.currentChunks(T).chunks.map(hex), [hex(t1)]);
+ok('the close and the session are separate versions', after.version !== s.versionsOf(T)[1].id, true);
+
 console.log('keep');
 
 const now = new Date(Date.UTC(2026, 9, 19, 0, 0, 0)); // a month later

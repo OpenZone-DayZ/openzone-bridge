@@ -24,6 +24,9 @@ const BOX_ID = new RegExp(String.raw`^(?:${PLAIN_ID}|${STASH_ID})$`);
 // String.raw on the OUTER template too: a plain one would eat the backslashes
 // of \d and \. and quietly match far more than it should.
 const CLOSE_NAME = new RegExp(String.raw`^((?:${PLAIN_ID}|${STASH_ID}))-(\d{8}-\d{6})\.bin$`);
+// A TURN's file (design 2026-09-24 section 7): the same shape with a serial,
+// because several turns can land inside one second.
+const OP_NAME = new RegExp(String.raw`^((?:${PLAIN_ID}|${STASH_ID}))-(\d{8}-\d{6})-(\d{1,6})\.bin$`);
 const STALE_MS = 5 * 60 * 1000;
 // The header is under two hundred bytes; this is how much of a cache is
 // read to validate it.
@@ -56,6 +59,11 @@ export class Xchg {
     return !!m && m[1] === String(boxId);
   }
 
+  static opName(name, boxId) {
+    const m = OP_NAME.exec(String(name ?? ''));
+    return !!m && m[1] === String(boxId);
+  }
+
   cacheName(boxId) {
     return `${boxId}.bin`;
   }
@@ -69,9 +77,15 @@ export class Xchg {
     return readFileSync(join(this.dir, name));
   }
 
+  readOp(name, boxId) {
+    if (!Xchg.opName(name, boxId)) throw new WireError('not a turn file name of this box');
+    return readFileSync(join(this.dir, name));
+  }
+
   discard(name) {
-    if (!CLOSE_NAME.test(String(name ?? ''))) return;
-    try { unlinkSync(join(this.dir, name)); } catch { /* already gone */ }
+    const n = String(name ?? '');
+    if (!CLOSE_NAME.test(n) && !OP_NAME.test(n)) return;
+    try { unlinkSync(join(this.dir, n)); } catch { /* already gone */ }
   }
 
   promote(name, boxId) {
@@ -118,7 +132,7 @@ export class Xchg {
       let drop = false;
       if (name.endsWith('.part')) {
         drop = true;
-      } else if (CLOSE_NAME.test(name)) {
+      } else if (CLOSE_NAME.test(name) || OP_NAME.test(name)) {
         drop = now - statSync(p).mtimeMs > STALE_MS;
       } else if (name.endsWith('.bin')) {
         drop = !known.has(name.slice(0, -4));

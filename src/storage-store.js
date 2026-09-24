@@ -324,6 +324,70 @@ export class StorageStore {
     });
   }
 
+  // ---- one turn of a proxy session (design 2026-09-24 section 7) ----
+  //
+  // A turn changes a ROOT or two, not the box. The roots of the current
+  // version are rewritten in place, so history stays readable: the version is
+  // forked ONCE, on the first turn after it was written by something else, and
+  // every turn of that session then mutates the fork. One version per session
+  // rather than one per drag.
+  //
+  // `rewrite` and `drop` are POSITIONS in the record as the game knew it when
+  // it sent the letter -- both in the numbering BEFORE this letter is applied,
+  // because that is the order the game applies them in too. Rewrites land
+  // first, then the drops leave the list, then the additions join the end.
+  applyOps({ boxId, chunks, rewrite = [], drop = [], adds = 0, by = '', at = stampNow() }) {
+    return this.#tx(() => {
+      const box = this.boxOf(boxId);
+      if (!box || box.current_version === 0) throw new Error('the box has no record to change');
+      let version = box.current_version;
+      let v = this.q.verGet.get(version);
+      if (!v) throw new Error('the box names a version that is not there');
+      // Copy on write: the first turn of a session forks the version it found,
+      // so what the session started from stays in the history.
+      if (v.source !== 'live') {
+        const rows = this.q.rootsOf.all(version);
+        const forked = Number(this.q.verIns.run(boxId, v.stamp, at, 'live', v.save_version, v.roots, v.entities, by).lastInsertRowid);
+        rows.forEach((r, i) => this.q.rootIns.run(forked, i, hashOf(asBuffer(r.bytes))));
+        version = forked;
+        v = this.q.verGet.get(version);
+      }
+      // The roots as they are now, in order.
+      const list = this.q.rootsOf.all(version).map((r) => asBuffer(r.bytes));
+      const want = rewrite.length + adds;
+      if (chunks.length !== want) throw new Error(`the file holds ${chunks.length} root(s), the letter says ${want}`);
+      rewrite.forEach((pos, i) => {
+        if (!Number.isInteger(pos) || pos < 0 || pos >= list.length) throw new Error(`root ${pos} is not in this record`);
+        list[pos] = chunks[i];
+      });
+      const gone = [...new Set(drop)].sort((a, b) => b - a);
+      for (const pos of gone) {
+        if (!Number.isInteger(pos) || pos < 0 || pos >= list.length) throw new Error(`root ${pos} is not in this record`);
+        list.splice(pos, 1);
+      }
+      for (let i = 0; i < adds; i++) list.push(chunks[rewrite.length + i]);
+      // The version is rewritten whole: its roots are a short list of hashes
+      // and the blobs are shared, so this costs one row per root and no bytes.
+      const parsed = list.map((c) => parseChunk(c));
+      let entities = 0;
+      for (const p of parsed) entities += p.nodes.length;
+      this.q.rootsDel.run(version);
+      list.forEach((c, i) => {
+        const h = hashOf(c);
+        this.q.blobIns.run(h, c, c.length);
+        this.q.rootIns.run(version, i, h);
+      });
+      this.db.prepare('UPDATE storage_versions SET roots = ?, entities = ?, stamp = ?, note = ? WHERE id = ?')
+        .run(list.length, entities, at, by, version);
+      this.#reindex(boxId, parsed);
+      // The box keeps its status: a session is not a close. The cache is void
+      // either way -- the next open builds a fresh file.
+      this.db.prepare(`UPDATE storage_boxes SET current_version = ?, cache_stamp = '', cache_size = 0 WHERE box_id = ?`)
+        .run(version, boxId);
+      return { version, roots: list.length, entities };
+    });
+  }
+
   currentChunks(boxId) {
     const box = this.boxOf(boxId);
     if (!box || box.current_version === 0) return null;

@@ -83,6 +83,45 @@ export function storageRoutes({ store, xchg, admin }) {
       return { ok: true, version: r.version, roots: r.roots, entities: r.entities };
     },
 
+    // One turn of a proxy session (design 2026-09-24 section 7). The roots the
+    // turn changed, the roots it removed and the roots it added, in one letter
+    // so a turn that touches two roots cannot half-happen.
+    '/v1/storage/op': async ({ Json }) => {
+      if (!xchg) return off;
+      const id = boxId(Json);
+      if (!id) return bad('bad box id');
+      const rewrite = (Array.isArray(Json.rewrite) ? Json.rewrite : []).map((x) => Number(x) | 0);
+      const drop = (Array.isArray(Json.drop) ? Json.drop : []).map((x) => Number(x) | 0);
+      const adds = Number(Json.adds) || 0;
+      const name = String(Json.file || '');
+      let chunks = [];
+      if (rewrite.length + adds > 0) {
+        if (!Xchg.opName(name, id)) return bad(`bad file name: ${name}`);
+        let parsed;
+        try {
+          parsed = parseFile(xchg.readOp(name, id));
+        } catch (e) {
+          xchg.discard(name);
+          return bad(e instanceof WireError ? `file refused: ${e.message}` : `file unreadable: ${e.code || e.message}`);
+        }
+        if (parsed.header.boxId !== id) {
+          xchg.discard(name);
+          return bad('the file belongs to another box');
+        }
+        chunks = parsed.roots.map((x) => x.bytes);
+      }
+      let r;
+      try {
+        r = store.applyOps({ boxId: id, chunks, rewrite, drop, adds, by: 'session' });
+      } catch (e) {
+        xchg.discard(name);
+        return bad(`the turn was refused: ${e.message}`);
+      }
+      // The file has been read into SQL; it is nobody's any more.
+      if (name) xchg.discard(name);
+      return { ok: true, version: r.version, roots: r.roots, entities: r.entities };
+    },
+
     '/v1/storage/closed': async ({ Json }) => {
       if (!xchg) return off;
       const id = boxId(Json);
