@@ -522,6 +522,24 @@ console.log('the four corners the owner asked about');
   ok('and a caller that names no version is trusted as before', withWorld.shelve({ id: DRIFT, root: 0, admin: 't' }).ok, true);
 }
 
+console.log('a personal stash is a box with a pair for a key');
+
+{
+  // The stash's key carries the anchor and the owner (design 2026-09-23), so
+  // the listing can show a `Whose` column without the boxes table growing one.
+  const STASH = 's_11539x3377_76561198014475380';
+  s.ingestClose({ boxId: STASH, header: { stamp: '2026-09-23 13:45:00', boxClass: 'OZ_PersonalStash', saveVer: 142 }, chunks: [buildChunk([paper(0, 0)], Buffer.from('cc', 'hex'))], at: '2026-09-23 13:45:01' });
+  const a = storageAdmin({ store: s, xchg: new Xchg(dir) });
+  const rows = a.boxes().boxes;
+  const stash = rows.find((b) => b.box_id === STASH);
+  const plain = rows.find((b) => b.box_id === BOX);
+  ok('the stash is in the ordinary list', !!stash, true);
+  ok('and it carries its anchor and its owner', [stash.kind, stash.anchor, stash.owner], ['stash', '11539x3377', '76561198014475380']);
+  ok('a plain box carries neither', [plain.kind, plain.anchor, plain.owner], ['box', '', '']);
+  ok('a stash opens like any other box', a.box({ id: STASH }).ok, true);
+  ok('and its version history is its own', a.box({ id: STASH }).versions.length, 1);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();
 rmSync(dir, { recursive: true, force: true });

@@ -12,9 +12,18 @@ import { join } from 'node:path';
 import { parseHeader, WireError } from './storage-wire.js';
 
 // Four signed integers, the engine's persistent id as "b1-b2-b3-b4".
-const BOX_ID = /^-?\d{1,11}(--?\d{1,11}){3}$/;
+const PLAIN_ID = String.raw`-?\d{1,11}(?:--?\d{1,11}){3}`;
+// A PERSONAL STASH is keyed by a pair, not by one id: `s_<anchor>_<uid>`,
+// where the anchor is where its locker stands in whole metres and the uid is
+// a SteamID64. The game spells it in OZS_Const.StashId and this is the mirror
+// of that one line. `-` is not used as a separator on purpose: a persistent
+// id is full of them.
+const STASH_ID = String.raw`s_\d{1,6}x\d{1,6}_\d{5,20}`;
+const BOX_ID = new RegExp(String.raw`^(?:${PLAIN_ID}|${STASH_ID})$`);
 // <boxId>-<YYYYMMDD-HHMMSS>.bin, and nothing that could be a path.
-const CLOSE_NAME = /^(-?\d{1,11}(?:--?\d{1,11}){3})-(\d{8}-\d{6})\.bin$/;
+// String.raw on the OUTER template too: a plain one would eat the backslashes
+// of \d and \. and quietly match far more than it should.
+const CLOSE_NAME = new RegExp(String.raw`^((?:${PLAIN_ID}|${STASH_ID}))-(\d{8}-\d{6})\.bin$`);
 const STALE_MS = 5 * 60 * 1000;
 // The header is under two hundred bytes; this is how much of a cache is
 // read to validate it.
@@ -28,6 +37,18 @@ export class Xchg {
 
   static isBoxId(id) {
     return BOX_ID.test(String(id ?? ''));
+  }
+
+  // What a box id IS, for anyone who has to show it to a person. A plain box
+  // has neither an anchor nor an owner; a stash has both, and the three parts
+  // are split at the LAST underscore so an anchor key may grow one of its own
+  // later. Never throws: an id it does not recognise is simply a box.
+  static splitId(id) {
+    const s = String(id ?? '');
+    if (!s.startsWith('s_')) return { kind: 'box', anchor: '', owner: '' };
+    const cut = s.lastIndexOf('_');
+    if (cut <= 1) return { kind: 'box', anchor: '', owner: '' };
+    return { kind: 'stash', anchor: s.slice(2, cut), owner: s.slice(cut + 1) };
   }
 
   static closeName(name, boxId) {

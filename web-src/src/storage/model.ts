@@ -15,6 +15,11 @@ export type Box = {
   // (storage-admin.js), and when that boot was.
   in_world?: 'yes' | 'no' | 'unknown';
   world_boot?: string;
+  // Read off the id by the bridge, not stored: a personal stash is keyed by
+  // a pair (which anchor, and whose), a plain box by one id.
+  kind?: 'box' | 'stash';
+  anchor?: string;
+  owner?: string;
   // The cargo in cells, counted by the bridge out of the server's class
   // sizes (the box page only): used, the box's own, and how many items the
   // dump could not size (counted as one cell each).
@@ -101,10 +106,11 @@ export type Health = {
 export type LiveResult = { at: string; kind: string; note: string };
 
 export const COLS = 10;
-export const SIZES: Record<string, { rows: number; key: 'size_small' | 'size_medium' | 'size_large' }> = {
+export const SIZES: Record<string, { rows: number; key: 'size_small' | 'size_medium' | 'size_large' | 'size_stash' }> = {
   OZ_StorageBox_Small: { rows: 25, key: 'size_small' },
   OZ_StorageBox_Medium: { rows: 50, key: 'size_medium' },
   OZ_StorageBox_Large: { rows: 100, key: 'size_large' },
+  OZ_PersonalStash: { rows: 50, key: 'size_stash' },
 };
 
 export const num = (v: number): number => Math.round(v * 100) / 100;

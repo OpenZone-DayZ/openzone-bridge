@@ -31,6 +31,10 @@ export function BoxesPage() {
   const [status, setStatus] = useState('live');
   const [world, setWorld] = useState('');
   const [size, setSize] = useState('');
+  // Personal stashes live in the same list as the boxes (design 2026-09-23)
+  // because they ARE boxes in SQL; this only narrows it to one kind or the
+  // other when an admin is looking for one in particular.
+  const [kind, setKind] = useState('');
 
   useEffect(() => {
     api<{ boxes: Box[] }>('storage', 'boxes').then((r) => (r.ok ? setBoxes(r.boxes) : setWhy(r.why)));
@@ -44,10 +48,11 @@ export function BoxesPage() {
       if (status !== 'live' && status !== 'all' && b.status !== status) return false;
       if (world && (b.in_world || 'unknown') !== world) return false;
       if (size && b.class !== size) return false;
-      if (needle && !`${b.box_id} ${b.class} ${b.placed_by} ${b.pos}`.toLowerCase().includes(needle)) return false;
+      if (kind && (b.kind || 'box') !== kind) return false;
+      if (needle && !`${b.box_id} ${b.class} ${b.placed_by} ${b.pos} ${b.owner || ''} ${b.anchor || ''}`.toLowerCase().includes(needle)) return false;
       return true;
     });
-  }, [boxes, q, status, world, size]);
+  }, [boxes, q, status, world, size, kind]);
 
   const sizeName = (cls: string) => (SIZES[cls] ? s(SIZES[cls].key) : cls);
   const cols: Col<Box>[] = [
@@ -58,6 +63,7 @@ export function BoxesPage() {
     { key: 'roots', label: s('roots'), num: true, render: (b) => b.roots ?? 0, sort: (b) => b.roots ?? 0 },
     { key: 'version', label: s('version'), num: true, render: (b) => b.current_version, sort: (b) => b.current_version },
     { key: 'pos', label: s('pos'), mono: true, render: (b) => b.pos, sort: (b) => b.pos },
+    { key: 'owner', label: s('owner'), mono: true, render: (b) => b.owner || '', sort: (b) => b.owner || '' },
     { key: 'placed_by', label: s('placed_by'), render: (b) => b.placed_by, sort: (b) => b.placed_by },
     { key: 'last_seen', label: s('last_seen'), mono: true, render: (b) => b.last_seen_at, sort: (b) => b.last_seen_at },
   ];
@@ -79,6 +85,11 @@ export function BoxesPage() {
           <option value="yes">{s('f_world_yes')}</option>
           <option value="no">{s('f_world_no')}</option>
           <option value="unknown">{s('f_world_unknown')}</option>
+        </select>
+        <select value={kind} onChange={(e) => setKind(e.target.value)} title={s('f_kind')}>
+          <option value="">{s('f_any_kind')}</option>
+          <option value="box">{s('f_kind_box')}</option>
+          <option value="stash">{s('f_kind_stash')}</option>
         </select>
         <select value={size} onChange={(e) => setSize(e.target.value)}>
           <option value="">{s('all_sizes')}</option>

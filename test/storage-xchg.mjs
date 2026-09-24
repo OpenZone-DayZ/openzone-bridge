@@ -33,6 +33,19 @@ ok('a close file is the box id, a file stamp and .bin', Xchg.closeName(`${BOX}-2
 ok('another box\'s name is refused', Xchg.closeName(`${OTHER}-20260919-051530.bin`, BOX), false);
 ok('a path is refused', [Xchg.closeName(`../${BOX}-20260919-051530.bin`, BOX), Xchg.closeName(`${BOX}.bin`, BOX), Xchg.closeName(`${BOX}-2026-09-19.bin`, BOX)], [false, false, false]);
 
+// A PERSONAL STASH is keyed by a pair, `s_<anchor>_<uid>` (design
+// 2026-09-23). The exchange has to accept it as a box id and as a file name,
+// and it must still refuse everything it refused before.
+const STASH = 's_11539x3377_76561198014475380';
+
+ok('a stash id is the pair', [Xchg.isBoxId(STASH), Xchg.isBoxId('s_11539x3377_1'), Xchg.isBoxId('s__76561198014475380'), Xchg.isBoxId('s_11539_76561198014475380')], [true, false, false, false]);
+ok('a stash close file is named like any other', Xchg.closeName(`${STASH}-20260923-134501.bin`, STASH), true);
+ok('a stash name is refused for a box and the other way round', [Xchg.closeName(`${STASH}-20260923-134501.bin`, BOX), Xchg.closeName(`${BOX}-20260923-134501.bin`, STASH)], [false, false]);
+ok('a path is refused in a stash name too', Xchg.closeName(`../${STASH}-20260923-134501.bin`, STASH), false);
+ok('a stash id splits into anchor and owner', Xchg.splitId(STASH), { kind: 'stash', anchor: '11539x3377', owner: '76561198014475380' });
+ok('a plain box id splits into nothing', Xchg.splitId(BOX), { kind: 'box', anchor: '', owner: '' });
+ok('nonsense splits into a box rather than throwing', [Xchg.splitId(''), Xchg.splitId('s_'), Xchg.splitId(null)], [{ kind: 'box', anchor: '', owner: '' }, { kind: 'box', anchor: '', owner: '' }, { kind: 'box', anchor: '', owner: '' }]);
+
 console.log('the close file becomes the cache');
 
 const x = new Xchg(dir);

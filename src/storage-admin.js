@@ -7,6 +7,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { stampNow } from './storage-wire.js';
+import { Xchg } from './storage-xchg.js';
 
 // The difference between two versions as classes, counted: what a rollback
 // from `a` to `b` makes disappear and appear. Every node of every root
@@ -92,7 +93,11 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
     const sid = String(server || '');
     const srv = (sid && servers.find((x) => x.id === sid)) || servers.find((x) => x.kinds && x.kinds.storage) || null;
     const boot = srv && srv.kinds && srv.kinds.storage ? stampNow(new Date(srv.kinds.storage)) : '';
-    return (b) => ({ ...b, in_world: boot ? (b.last_seen_at >= boot ? 'yes' : 'no') : 'unknown', world_boot: boot });
+    // `kind`, `anchor` and `owner` are READ OFF THE ID, not stored: a stash's
+    // key already carries the pair, so the boxes table needs no column for it
+    // and an old row cannot disagree with its own name. A plain box gets
+    // empty strings, which is what the listing shows as a blank cell.
+    return (b) => ({ ...b, ...Xchg.splitId(b.box_id), in_world: boot ? (b.last_seen_at >= boot ? 'yes' : 'no') : 'unknown', world_boot: boot });
   }
 
   const bad = (why) => ({ ok: false, why });
