@@ -19,7 +19,8 @@ const DDL = [
      current_version INTEGER NOT NULL DEFAULT 0,
      last_seen_at    TEXT NOT NULL DEFAULT '',
      cache_stamp     TEXT NOT NULL DEFAULT '',
-     cache_size      INTEGER NOT NULL DEFAULT 0
+     cache_size      INTEGER NOT NULL DEFAULT 0,
+     open_by         TEXT NOT NULL DEFAULT ''
    )`,
   `CREATE TABLE IF NOT EXISTS storage_versions (
      id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,6 +103,12 @@ export class StorageStore {
   constructor(store) {
     this.db = store.db;
     for (const ddl of DDL) this.db.exec(ddl);
+    // WHICH SERVER HOLDS A BOX OPEN (review 2026-09-26, B6). A column added
+    // after the table first shipped: CREATE TABLE IF NOT EXISTS leaves an
+    // existing table as it is, so the column is put in by hand where it is
+    // missing.
+    const cols = this.db.prepare('PRAGMA table_info(storage_boxes)').all().map((c) => c.name);
+    if (!cols.includes('open_by')) this.db.exec(`ALTER TABLE storage_boxes ADD COLUMN open_by TEXT NOT NULL DEFAULT ''`);
     const q = (sql) => this.db.prepare(sql);
     this.q = {
       boxGet: q('SELECT * FROM storage_boxes WHERE box_id = ?'),
@@ -113,8 +120,23 @@ export class StorageStore {
                     placed_at = CASE WHEN placed_at = '' THEN excluded.placed_at ELSE placed_at END,
                     placed_by = CASE WHEN placed_by = '' THEN excluded.placed_by ELSE placed_by END,
                     last_seen_at = excluded.last_seen_at`),
-      boxStatus: q('UPDATE storage_boxes SET status = ? WHERE box_id = ?'),
-      boxCurrent: q(`UPDATE storage_boxes SET current_version = ?, status = 'closed', cache_stamp = '', cache_size = 0
+      boxStatus: q('UPDATE storage_boxes SET status = ?, open_by = ? WHERE box_id = ?'),
+      // A SESSION'S VERSION IS RETIRED WHEN THE SESSION ENDS. `live` is what
+      // applyOps mutates in place; left `live` after the close, the NEXT
+      // session found it and mutated it too, so two sessions shared one
+      // version and "one version per session" held for the first only
+      // (review 2026-09-26, E5).
+      verRetire: q(`UPDATE storage_versions SET source = 'session' WHERE id = ? AND source = 'live'`),
+      // THE STATUS IS NOT A SIDE EFFECT OF WRITING A VERSION.
+      //
+      // This used to set `status = 'closed'` as well, so anything that made a
+      // version -- a give, an unpark, a rollback, a repair in the middle of a
+      // live session -- also declared the box shut. `open` is what keeps an
+      // admin from writing into a record a session is about to overwrite, and
+      // a flag that clears itself on an unrelated write cannot do that job.
+      // Who holds the contents is said by markOpen and markClosed, and by
+      // nothing else (owner asked what `open` even means, 2026-09-26).
+      boxCurrent: q(`UPDATE storage_boxes SET current_version = ?, cache_stamp = '', cache_size = 0
                      WHERE box_id = ?`),
       boxCache: q('UPDATE storage_boxes SET cache_stamp = ?, cache_size = ? WHERE box_id = ?'),
       boxRemoved: q(`UPDATE storage_boxes SET status = 'removed', removed_at = ? WHERE box_id = ?`),
@@ -247,18 +269,37 @@ export class StorageStore {
     this.q.boxRemoved.run(at, boxId);
   }
 
-  markOpen(boxId, at = stampNow()) {
+  // A BOX IS HELD OPEN BY THE SERVER THAT OPENED IT. The same server asking
+  // again is a restart -- the engine knows better than SQL whether its
+  // session survived -- and is allowed; a DIFFERENT server asking while it
+  // is open would materialise the same record twice, and both would write
+  // it (review 2026-09-26, B6). A server with no name is the old
+  // configuration, and is held out of nothing.
+  #heldByAnother(box, server) {
+    const s = String(server || '');
+    return box.status === 'open' && !!box.open_by && !!s && box.open_by !== s;
+  }
+
+  markOpen(boxId, opts = {}) {
+    // The second argument was the stamp alone until 2026-09-26; a bare
+    // string still means that.
+    const { server = '', at = stampNow() } = typeof opts === 'string' ? { at: opts } : (opts || {});
     const box = this.boxOf(boxId);
     if (!box || box.status === 'removed') return false;
-    this.q.boxStatus.run('open', boxId);
+    if (this.#heldByAnother(box, server)) return false;
+    this.q.boxStatus.run('open', String(server || ''), boxId);
     this.q.boxSeen.run(boxId, '', '', '', '', at);
     return true;
   }
 
-  markClosed(boxId) {
+  // Closing also retires the session's `live` version (see verRetire), so
+  // the next session forks a version of its own.
+  markClosed(boxId, { server = '' } = {}) {
     const box = this.boxOf(boxId);
     if (!box || box.status === 'removed') return false;
-    this.q.boxStatus.run('closed', boxId);
+    if (this.#heldByAnother(box, server)) return false;
+    this.q.boxStatus.run('closed', '', boxId);
+    if (box.current_version) this.q.verRetire.run(box.current_version);
     return true;
   }
 
@@ -268,9 +309,10 @@ export class StorageStore {
 
   // The boot exchange (design section 3.3): every box the engine has, with
   // what SQL knows about each, and every class that SQL holds anywhere.
-  boot(boxes, at = stampNow()) {
+  boot(boxes, at = stampNow(), server = '') {
     const out = [];
     const back = [];
+    const me = String(server || '');
     for (const b of boxes) {
       this.seen(b.id, { class: b.class || '', pos: b.pos || '', at });
       let row = this.boxOf(b.id);
@@ -291,6 +333,13 @@ export class StorageStore {
         continue;
       }
       const v = this.q.verGet.get(row.current_version);
+      // A box another server holds open is CLOSED as far as this one is
+      // concerned -- it may not open it and must not close it -- and the
+      // answer says who has it, for the log.
+      if (this.#heldByAnother(row, me)) {
+        out.push({ id: b.id, status: 'closed', version: row.current_version, roots: v ? v.roots : 0, held_by: row.open_by });
+        continue;
+      }
       out.push({ id: b.id, status: row.status, version: row.current_version, roots: v ? v.roots : 0 });
     }
     if (back.length) {
@@ -336,18 +385,102 @@ export class StorageStore {
   // it sent the letter -- both in the numbering BEFORE this letter is applied,
   // because that is the order the game applies them in too. Rewrites land
   // first, then the drops leave the list, then the additions join the end.
-  applyOps({ boxId, chunks, rewrite = [], drop = [], adds = 0, by = '', at = stampNow() }) {
+  // THE WHOLE RECORD, SET TO WHAT THE BOX ACTUALLY HOLDS.
+  //
+  // Every other write is RELATIVE -- rewrite this position, drop that one --
+  // and relative writes can only stay honest while both sides agree about the
+  // positions. When they stop agreeing there is nothing a relative letter can
+  // say that fixes it, because it is written in the very numbering that is
+  // wrong. So there is one absolute form, and this is it: the roots of the
+  // current version become exactly these chunks, in this order.
+  //
+  // It is not a close. The version stays 'live' and the history is untouched:
+  // this is the same session still going, with its record put straight.
+  //
+  // WHO IS ALLOWED TO SAY IT: only the side holding the authority, because
+  // only that side knows what the box really holds. That is also why it is
+  // safe -- within a session the authority IS the contents, and a root the
+  // record has that the box does not is a root that was parked out of the
+  // version before the box was ever filled (see parkMissing).
+  //
+  // `close` is the CLOSING WRITE: the session is over and the box is shut in
+  // the same step as its roots are written. Sent as two requests they were
+  // concurrent, and an admin's write landing between them was overwritten by
+  // the session's rewrite (review 2026-09-26, C4).
+  replaceRoots({ boxId, chunks, saveVer = 0, by = '', at = stampNow(), close = false, server = '' }) {
     return this.#tx(() => {
       const box = this.boxOf(boxId);
-      if (!box || box.current_version === 0) throw new Error('the box has no record to change');
+      if (!box) throw new Error('the box has no record to change');
+      const parsed = chunks.map((c) => parseChunk(c));
+      let entities = 0;
+      for (const p of parsed) entities += p.nodes.length;
       let version = box.current_version;
+      if (version === 0 || this.q.verGet.get(version)?.source !== 'live') {
+        // Nothing to put straight yet, or the session has not forked its own
+        // version: make one rather than rewriting what a close left behind.
+        //
+        // THE SAVE VERSION HAS TO BE CARRIED, and forgetting it does not fail
+        // loudly -- it makes the box unopenable. The chunks are bodies the
+        // GAME wrote under its own save version; a version that claims 0
+        // hands them back to the game as if they were written by an older
+        // build, the first body misparses, and every root is parked in turn
+        // until the open gives up ("the marker after the root does not
+        // match"). Measured 2026-09-25: a box of 117 roots stopped opening
+        // after one ordinary close.
+        // The letter's own first, then whatever this box last carried. A box
+        // with no history has nothing to fall back on, which is exactly the
+        // case the letter answers.
+        const keep = this.#saveVerFor(boxId, saveVer, box.current_version ? (this.q.verGet.get(box.current_version)?.save_version || 0) : 0);
+        const made = this.#newVersion(boxId, chunks, { source: 'live', note: by || 'repair', saveVer: keep });
+        if (close) this.markClosed(boxId, { server });
+        return { version: made.version, roots: made.roots, entities: made.entities };
+      }
+      this.q.rootsDel.run(version);
+      chunks.forEach((c, i) => {
+        const h = hashOf(c);
+        this.q.blobIns.run(h, c, c.length);
+        this.q.rootIns.run(version, i, h);
+      });
+      this.db.prepare('UPDATE storage_versions SET roots = ?, entities = ?, stamp = ?, note = ?, save_version = ? WHERE id = ?')
+        .run(chunks.length, entities, at, by || 'repair', this.#saveVerFor(boxId, this.q.verGet.get(version)?.save_version || 0, saveVer), version);
+      this.#reindex(boxId, parsed);
+      this.db.prepare(`UPDATE storage_boxes SET current_version = ?, cache_stamp = '', cache_size = 0 WHERE box_id = ?`)
+        .run(version, boxId);
+      if (close) this.markClosed(boxId, { server });
+      return { version, roots: chunks.length, entities };
+    });
+  }
+
+  applyOps({ boxId, chunks, rewrite = [], drop = [], adds = 0, expect = [], saveVer = 0, by = '', at = stampNow() }) {
+    return this.#tx(() => {
+      const box = this.boxOf(boxId);
+      if (!box) throw new Error('the box has no record to change');
+      let version = box.current_version;
+      // A BOX NOBODY HAS EVER WRITTEN TO STILL TAKES ITS FIRST ITEM.
+      //
+      // A version is made by a CLOSE, so a box that has only ever been opened
+      // has none -- and every brand-new one is in that state, a personal stash
+      // most of all, since it comes into being the first time somebody walks
+      // up to a locker. Refusing that first turn cost the player the item they
+      // were putting in: it was already inside the authority, the session
+      // ended on the refusal, and the authority was discarded with it still
+      // there (measured 2026-09-25, a pair of trousers).
+      //
+      // So the first turn opens the record instead of being turned away. An
+      // empty version costs one row and no blobs.
+      if (version === 0) {
+        // Same as replaceRoots: whatever save version this box last carried.
+        // An empty version has no bodies to misread, but the roots that land
+        // in it next do.
+        version = this.#newVersion(boxId, [], { source: 'live', note: by || 'first turn', saveVer: this.#saveVerFor(boxId, saveVer) }).version;
+      }
       let v = this.q.verGet.get(version);
       if (!v) throw new Error('the box names a version that is not there');
       // Copy on write: the first turn of a session forks the version it found,
       // so what the session started from stays in the history.
       if (v.source !== 'live') {
         const rows = this.q.rootsOf.all(version);
-        const forked = Number(this.q.verIns.run(boxId, v.stamp, at, 'live', v.save_version, v.roots, v.entities, by).lastInsertRowid);
+        const forked = Number(this.q.verIns.run(boxId, v.stamp, at, 'live', this.#saveVerFor(boxId, v.save_version, saveVer), v.roots, v.entities, by).lastInsertRowid);
         rows.forEach((r, i) => this.q.rootIns.run(forked, i, hashOf(asBuffer(r.bytes))));
         version = forked;
         v = this.q.verGet.get(version);
@@ -356,6 +489,32 @@ export class StorageStore {
       const list = this.q.rootsOf.all(version).map((r) => asBuffer(r.bytes));
       const want = rewrite.length + adds;
       if (chunks.length !== want) throw new Error(`the file holds ${chunks.length} root(s), the letter says ${want}`);
+      // POSITION k MUST MEAN THE SAME ROOT ON BOTH SIDES, and this is where
+      // that is established rather than assumed. The letter names the class it
+      // believes stands at each position it touches; if the record holds
+      // something else the two numberings have come apart, and applying the
+      // letter would rewrite and drop the wrong roots while leaving the counts
+      // looking right -- which is exactly how a drifted turn corrupted a box
+      // without the count check noticing (measured 2026-09-25).
+      //
+      // Refusing throws, so the transaction takes nothing: the session is told
+      // no and answers with an absolute rewrite, which is the one letter that
+      // does not depend on the numbering.
+      //
+      // Only the named positions are parsed, so this costs one or two parses
+      // per turn, not one per root.
+      const named = [...rewrite, ...drop];
+      for (let i = 0; i < named.length && i < expect.length; i++) {
+        const said = String(expect[i] || '');
+        // An empty name is this side having nothing to say, not a mismatch.
+        if (!said) continue;
+        const pos = named[i];
+        if (!Number.isInteger(pos) || pos < 0 || pos >= list.length) continue;
+        const held = parseChunk(list[pos])?.nodes?.[0]?.type || '';
+        if (held !== said) {
+          throw new Error(`root ${pos} holds ${held || 'nothing'}, the letter says ${said}: the two sides have stopped agreeing about positions`);
+        }
+      }
       rewrite.forEach((pos, i) => {
         if (!Number.isInteger(pos) || pos < 0 || pos >= list.length) throw new Error(`root ${pos} is not in this record`);
         list[pos] = chunks[i];
@@ -473,7 +632,16 @@ export class StorageStore {
       try { types = JSON.parse(p.types); } catch { types = [p.type]; }
       if (!types.every((t) => have.has(t))) continue;
       const box = this.boxOf(p.box_id);
-      if (!box || box.status !== 'closed') continue;
+      // `removed` only, and NOT `open`. This runs from one place -- the class
+      // list a server sends at BOOT -- and at boot there are no live sessions:
+      // an `open` here is left over from the run before, which the boot
+      // reconciliation is about to settle. Refusing it left a root parked that
+      // the server can hold again, and the refusal was invisible.
+      //
+      // The check used to pass only because writing a version cleared the
+      // status as a side effect; that side effect is gone (see boxCurrent),
+      // which is what made this one visible.
+      if (!box || box.status === 'removed') continue;
       const blob = this.q.blobGet.get(p.hash);
       if (!blob) continue;
       const cur = this.currentChunks(p.box_id);

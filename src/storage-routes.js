@@ -14,13 +14,15 @@ export function storageRoutes({ store, xchg, admin }) {
   const boxId = (j) => (Xchg.isBoxId(j?.id) ? String(j.id) : '');
 
   return {
-    '/v1/storage/boot': async ({ Json }) => {
+    '/v1/storage/boot': async ({ Json, ServerId }) => {
       if (!xchg) return off;
       const boxes = (Array.isArray(Json?.boxes) ? Json.boxes : [])
         // `cls` is the game's spelling: `class` is a keyword in Enforce Script.
         .map((b) => ({ id: String(b?.id || ''), class: String(b?.class || b?.cls || ''), state: String(b?.state || ''), entities: Number(b?.entities) || 0, pos: String(b?.pos || '') }))
         .filter((b) => Xchg.isBoxId(b.id));
-      const answer = store.boot(boxes);
+      // `ServerId` is the authenticated caller: a box another server holds
+      // open is answered as closed to this one (storage-store.js, boot).
+      const answer = store.boot(boxes, stampNow(), String(ServerId || ''));
       try {
         const swept = xchg.sweep(store.knownIds());
         if (swept.length) console.log(`[storage] boot: swept ${swept.length} stale file(s) from the exchange directory`);
@@ -86,16 +88,32 @@ export function storageRoutes({ store, xchg, admin }) {
     // One turn of a proxy session (design 2026-09-24 section 7). The roots the
     // turn changed, the roots it removed and the roots it added, in one letter
     // so a turn that touches two roots cannot half-happen.
-    '/v1/storage/op': async ({ Json }) => {
+    '/v1/storage/op': async ({ Json, ServerId }) => {
       if (!xchg) return off;
       const id = boxId(Json);
       if (!id) return bad('bad box id');
       const rewrite = (Array.isArray(Json.rewrite) ? Json.rewrite : []).map((x) => Number(x) | 0);
       const drop = (Array.isArray(Json.drop) ? Json.drop : []).map((x) => Number(x) | 0);
       const adds = Number(Json.adds) || 0;
+      // What the mod believes stands at each named position: the rewrites
+      // first, then the drops. See applyOps.
+      const expect = (Array.isArray(Json.expect) ? Json.expect : []).map((x) => String(x || ''));
       const name = String(Json.file || '');
       let chunks = [];
-      if (rewrite.length + adds > 0) {
+      // THE GAME'S OWN SAVE VERSION, read off the letter rather than guessed.
+      //
+      // Every letter's header carries `GetGame().SaveVersion()` -- the version
+      // the bodies in it were written under -- and until now only the CLOSE
+      // route read it. A turn therefore had to invent one, and for a box with
+      // no history the invention was 0: the next open handed those bodies back
+      // as if an older build had written them, every root misparsed, and the
+      // box came up empty with its roots parked (measured 2026-09-25 on a
+      // brand-new box of two items; the same shape took a box of 117 down).
+      let letterSaveVer = 0;
+      // A REPLACE OF AN EMPTY BOX CARRIES NO FILE, and must still be taken:
+      // a session that took the last item out ends by saying the record is
+      // now empty, and there are no chunks with which to say it.
+      if (rewrite.length + adds > 0 || (Json.replace && name)) {
         if (!Xchg.opName(name, id)) return bad(`bad file name: ${name}`);
         let parsed;
         try {
@@ -109,10 +127,20 @@ export function storageRoutes({ store, xchg, admin }) {
           return bad('the file belongs to another box');
         }
         chunks = parsed.roots.map((x) => x.bytes);
+        letterSaveVer = Number(parsed.header.saveVer) || 0;
       }
       let r;
       try {
-        r = store.applyOps({ boxId: id, chunks, rewrite, drop, adds, by: 'session' });
+        // `replace` is the absolute form: the roots become exactly the chunks
+        // in this letter. It is how a session puts a record straight when the
+        // two sides have stopped agreeing about positions, and how a session
+        // ends -- see replaceRoots. A relative letter cannot do either, being
+        // written in the numbering that is in doubt.
+        // `close` rides on the absolute form only: the closing write shuts
+        // the box in the same step as it writes the roots (review
+        // 2026-09-26, C4).
+        if (Json.replace) r = store.replaceRoots({ boxId: id, chunks, saveVer: letterSaveVer, by: 'session', close: !!Json.close, server: String(ServerId || '') });
+        else r = store.applyOps({ boxId: id, chunks, rewrite, drop, adds, expect, saveVer: letterSaveVer, by: 'session' });
       } catch (e) {
         xchg.discard(name);
         return bad(`the turn was refused: ${e.message}`);
@@ -122,30 +150,35 @@ export function storageRoutes({ store, xchg, admin }) {
       return { ok: true, version: r.version, roots: r.roots, entities: r.entities };
     },
 
-    '/v1/storage/closed': async ({ Json }) => {
+    '/v1/storage/closed': async ({ Json, ServerId }) => {
       if (!xchg) return off;
       const id = boxId(Json);
       if (!id) return bad('bad box id');
-      return store.markClosed(id) ? { ok: true } : bad('unknown box');
+      return store.markClosed(id, { server: String(ServerId || '') }) ? { ok: true } : bad('unknown box, or held open by another server');
     },
 
-    '/v1/storage/open': async ({ Json }) => {
+    '/v1/storage/open': async ({ Json, ServerId }) => {
       if (!xchg) return off;
       const id = boxId(Json);
       if (!id) return bad('bad box id');
       const box = store.boxOf(id);
       if (box && box.status === 'removed') return bad('unknown box');
+      const me = String(ServerId || '');
       if (!box) {
         // A box the engine has and SQL does not: new, and empty (design
         // section 3.3, status none). Its first close makes its first version.
         store.seen(id, { by: String(Json.by || '') });
-        store.markOpen(id);
+        store.markOpen(id, { server: me });
         return { ok: true, empty: true };
       }
+      // THE SAME SERVER OPENING AGAIN IS A RESTART and the engine knows
+      // better; ANOTHER server is refused, or both would hold the record
+      // (review 2026-09-26, B6).
+      if (box.status === 'open' && box.open_by && me && box.open_by !== me) return bad(`the box is open on another server (${box.open_by})`);
       if (box.status === 'open') console.warn(`[storage] open of ${id}, which SQL believed open already; the engine knows better`);
       const cur = store.currentChunks(id);
       if (!cur || cur.chunks.length === 0) {
-        store.markOpen(id);
+        store.markOpen(id, { server: me });
         return { ok: true, empty: true };
       }
       const info = xchg.cacheInfo(id);
@@ -168,15 +201,15 @@ export function storageRoutes({ store, xchg, admin }) {
       } catch (e) {
         return bad(`a stored root cannot be parsed: ${e.message}`);
       }
-      store.markOpen(id);
+      store.markOpen(id, { server: me });
       return { ok: true, file: xchg.cacheName(id), stamp: cur.stamp, roots: cur.chunks.length, entities };
     },
 
-    '/v1/storage/opened': async ({ Json }) => {
+    '/v1/storage/opened': async ({ Json, ServerId }) => {
       if (!xchg) return off;
       const id = boxId(Json);
       if (!id) return bad('bad box id');
-      return store.markOpen(id) ? { ok: true } : bad('unknown box');
+      return store.markOpen(id, { server: String(ServerId || '') }) ? { ok: true } : bad('unknown box, or held open by another server');
     },
 
     '/v1/storage/park': async ({ Json }) => {
