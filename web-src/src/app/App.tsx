@@ -11,7 +11,7 @@ import { ServersProvider, useServers, type ServerInfo } from './servers';
 import { ToastProvider } from './toasts';
 import { BoxesPage } from '../storage/BoxesPage';
 import { BoxPage } from '../storage/BoxPage';
-import { FindPage, HealthPage, PlayerPage, ShelfPage, StorageJournalPage } from '../storage/pages';
+import { FindPage, HealthPage, LockerPage, PlayerPage, ShelfPage, StorageJournalPage } from '../storage/pages';
 import { MapPage } from '../storage/MapPage';
 import { ConfigsPage, FactionsPage, ResearchJournalPage, StaticsPage } from '../research/pages';
 import { EditorPage } from '../research/editor/EditorPage';
@@ -96,7 +96,7 @@ function Shell() {
           )}
           <Who />
           <span className="lang">
-            <button type="button" className={`small${lang === 'uk' ? ' on' : ''}`} onClick={() => setLang('uk')}>UK</button>
+            <button type="button" className={`small${lang === 'uk' ? ' on' : ''}`} onClick={() => setLang('uk')}>UA</button>
             <button type="button" className={`small${lang === 'en' ? ' on' : ''}`} onClick={() => setLang('en')}>EN</button>
           </span>
         </div>
@@ -106,7 +106,7 @@ function Shell() {
           <aside className="side">
             <div className="group">{s(KIND_KEY[kind])}</div>
             {SIDE[kind].map((item) => (
-              <a key={item.page} className={route.page === item.page || (route.page === 'box' && item.page === 'boxes') || (route.page === 'config' && item.page === 'configs') ? 'on' : ''} href={href(kind, item.page)}>{s(item.key)}</a>
+              <a key={item.page} className={route.page === item.page || ((route.page === 'box' || route.page === 'locker') && item.page === 'boxes') || (route.page === 'config' && item.page === 'configs') ? 'on' : ''} href={href(kind, item.page)}>{s(item.key)}</a>
             ))}
           </aside>
         )}
@@ -190,6 +190,7 @@ function Page({ route }: { route: Route }): ReactNode {
     return <ConfigsPage />;
   }
   if (route.page === 'box' && route.arg) return <BoxPage id={route.arg} />;
+  if (route.page === 'locker' && route.arg) return <LockerPage anchor={route.arg} />;
   if (route.page === 'shelf') return <ShelfPage />;
   if (route.page === 'find') return <FindPage type={route.arg} />;
   if (route.page === 'player') return <PlayerPage uid={route.arg} />;

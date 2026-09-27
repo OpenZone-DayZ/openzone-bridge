@@ -4,12 +4,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '../api/client';
 import { useLang } from '../i18n';
-import { go } from '../app/router';
+import { go, href } from '../app/router';
 import { useToast } from '../app/toasts';
 import { Badge, Confirm, Loading, Notice, Panel } from '../ui/bits';
 import { Table, type Col } from '../ui/Table';
-import { BoxLink, StatusBadge } from './BoxesPage';
-import { SIZES, cellOf, eventCell, num, type Event, type Found, type Health, type Parked } from './model';
+import { BoxLink, PlayerLink, StatusBadge } from './BoxesPage';
+import { LabelForm } from './BoxPage';
+import { SIZES, cellOf, eventCell, named, num, type Event, type Found, type Health, type Locker, type Parked, type Sibling } from './model';
 
 function useAnswer<T>(kind: 'storage' | 'research', op: string, body: Record<string, unknown>, deps: unknown[]) {
   const [data, setData] = useState<T | null>(null);
@@ -113,7 +114,7 @@ export function FindPage({ type }: { type: string }) {
       {data && (
         <>
           {data.last
-            ? <p>{s('last_taken')}: {data.last.name || data.last.uid} · <span className="mono">{data.last.at}</span> · <BoxLink id={data.last.box_id} /></p>
+            ? <p>{s('last_taken')}: <PlayerLink uid={data.last.uid} name={data.last.name} /> · <span className="mono">{data.last.at}</span> · <BoxLink id={data.last.box_id} /></p>
             : <p className="muted">{s('nobody_took')}</p>}
           <Table cols={cols} rows={data.items} rowKey={(i) => `${i.box_id}/${i.root_idx}/${i.node_idx}`} />
         </>
@@ -124,7 +125,7 @@ export function FindPage({ type }: { type: string }) {
 
 export function PlayerPage({ uid }: { uid: string }) {
   const { s } = useLang();
-  const { data, why } = useAnswer<{ events: Event[] }>('storage', 'player', { uid, limit: 500 }, [uid]);
+  const { data, why } = useAnswer<{ events: Event[]; name?: string }>('storage', 'player', { uid, limit: 500 }, [uid]);
   const boxes = data ? [...new Set(data.events.map((e) => e.box_id).filter(Boolean))] : [];
   const cols: Col<Event>[] = [
     { key: 'when', label: s('when'), mono: true, render: (e) => e.at, sort: (e) => e.at },
@@ -137,7 +138,7 @@ export function PlayerPage({ uid }: { uid: string }) {
   ];
   return (
     <>
-      <h1>{s('nav_player')}</h1>
+      <h1>{s('nav_player')}{uid && data ? <span className="muted"> · {named(uid, data.name)}</span> : null}</h1>
       <SearchForm value={uid} placeholder={s('uid')} onSubmit={(v) => go('storage', 'player', v)} />
       {uid && why && <Notice tone="bad">{why}</Notice>}
       {uid && !data && !why && <Loading />}
@@ -145,6 +146,45 @@ export function PlayerPage({ uid }: { uid: string }) {
         <>
           {boxes.length > 0 && <p className="row">{s('player_boxes')}: {boxes.map((b) => <BoxLink key={b} id={b} />)}</p>}
           <Table cols={cols} rows={data.events} rowKey={(e) => String(e.id)} initialSort={{ key: 'when', desc: true }} />
+        </>
+      )}
+    </>
+  );
+}
+
+// One locker: where it stands, the admin's label for it, and every
+// player's stash there by name -- the pick of whose stash to show (owner,
+// 2026-09-27).
+export function LockerPage({ anchor }: { anchor: string }) {
+  const { s } = useLang();
+  const { data, why, reload } = useAnswer<{ locker: Locker }>('storage', 'locker', { anchor }, [anchor]);
+  const cols: Col<Sibling>[] = [
+    { key: 'who', label: s('owner'), render: (x) => <a href={href('storage', 'box', x.box_id)} title={x.owner}>{named(x.owner, x.owner_name)}</a>, sort: (x) => x.owner_name || x.owner },
+    { key: 'status', label: s('status'), render: (x) => <><StatusBadge status={x.status} />{x.in_world === 'no' && x.status !== 'removed' && <> <Badge tone="bad">{s('st_absent')}</Badge></>}</>, sort: (x) => x.status },
+    { key: 'items', label: s('items'), num: true, render: (x) => x.entities ?? 0, sort: (x) => x.entities ?? 0 },
+    { key: 'roots', label: s('roots'), num: true, render: (x) => x.roots ?? 0, sort: (x) => x.roots ?? 0 },
+    { key: 'last_seen', label: s('last_seen'), mono: true, render: (x) => x.last_seen_at || '', sort: (x) => x.last_seen_at || '' },
+    { key: 'id', label: s('id'), render: (x) => <BoxLink id={x.box_id} /> },
+  ];
+  return (
+    <>
+      <h1>{s('locker')} <span className="mono">{anchor}</span>{data && data.locker.name ? <span className="muted"> · {data.locker.name}</span> : null}</h1>
+      {why && <Notice tone="bad">{why}</Notice>}
+      {!data && !why && <Loading />}
+      {data && (
+        <>
+          <Panel>
+            <div className="facts">
+              <span className="k">{s('cls')}</span><span>{s('size_stash')}</span>
+              <span className="k">{s('pos')}</span><span className="mono">{data.locker.pos || '—'}</span>
+              {data.locker.place ? <><span className="k">{s('place')}</span><span>{data.locker.place}</span></> : null}
+              <span className="k">{s('f_kind_stash')}</span><span>{data.locker.stashes.length}</span>
+              <span className="k">{s('last_seen')}</span><span className="mono">{data.locker.last_seen_at || '—'}</span>
+            </div>
+          </Panel>
+          <LabelForm id={`locker:${anchor}`} name={data.locker.name} place={data.locker.place} onSaved={async () => reload()} />
+          <p className="muted small">{s('locker_help')}</p>
+          <Table cols={cols} rows={data.locker.stashes} rowKey={(x) => x.box_id} initialSort={{ key: 'last_seen', desc: true }} />
         </>
       )}
     </>

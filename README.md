@@ -127,6 +127,16 @@ one that would hand out the whole record twice.
 Without `STORAGE_XCHG_DIR` every storage route refuses and the game shows
 its boxes as unavailable.
 
+The admin page lists every box and every locker -- a locker is one row,
+the class "personal stash", no items and no roots because every player has
+their own there, the spot, the name -- shows a box's grid, tree, versions
+and events, and takes an admin's own words for a box or a locker: a name
+and a note on where it stands (`label`, empty by default; the game never
+shows them). A locker's page lists the players' stashes by their last
+known names, one pick away; players are named beside their SteamIDs
+wherever an event ever named them. From the console the same is
+`node scripts/storage.mjs label <id|locker:<anchor>> [name] [where it stands...]`.
+
 | `.env` key | Default | Meaning |
 |---|---|---|
 | `STORAGE_XCHG_DIR` | unset | the game server's `profiles/OpenZone/Storage/xchg` directory, on this machine |

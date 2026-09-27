@@ -93,7 +93,7 @@ ok('find', admin.find({ type: 'Paper' }).items.length, 1);
 ok('parked', admin.parked().parked.length, 0);
 ok('history answers events and versions', Object.keys(admin.history({ id: BOX })).sort(), ['events', 'ok', 'versions']);
 ok('history of an unknown box is refused', admin.history({ id: '9-9-9-9' }), { ok: false, why: 'unknown box' });
-ok('player answers events', admin.player({ uid: 'nobody' }), { ok: true, events: [] });
+ok('player answers events', admin.player({ uid: 'nobody' }), { ok: true, name: '', events: [] });
 ok('a fractional limit is coerced, not thrown', admin.history({ id: BOX, limit: 1.5 }).ok, true);
 
 const target = s.versionsOf(BOX).find((v) => v.roots === 0).id;
@@ -539,6 +539,38 @@ console.log('a personal stash is a box with a pair for a key');
   ok('a stash opens like any other box', a.box({ id: STASH }).ok, true);
   ok('and its version history is its own', a.box({ id: STASH }).versions.length, 1);
 }
+
+// A name and a place for admins, whose stash by name, and one row per
+// locker (owner, 2026-09-27).
+console.log('admin: labels, names and lockers');
+ok('label sets a name and a place, trimmed', admin.label({ id: BOX, name: '  Depot  ', place: ' NW airfield, by the tower ', admin: 'owner' }), { ok: true, key: BOX, name: 'Depot', place: 'NW airfield, by the tower' });
+ok('and the list carries them', admin.boxes().boxes.filter((b) => b.box_id === BOX).map((b) => [b.name, b.place]), [['Depot', 'NW airfield, by the tower']]);
+ok('and the box page too', [admin.box({ id: BOX }).box.name, admin.box({ id: BOX }).box.place], ['Depot', 'NW airfield, by the tower']);
+ok('label of an unknown box is refused', admin.label({ id: '9-9-9-9', name: 'x', admin: 'owner' }), { ok: false, why: 'unknown box' });
+ok('an empty label clears', admin.label({ id: BOX, admin: 'owner' }), { ok: true, key: BOX, name: '', place: '' });
+ok('label is journaled', admin.journal({ limit: 10 }).events.some((e) => e.kind === 'admin_label' && e.note.includes('Depot')), true);
+s.seen('s_100x200_111', { by: '111', at: '2026-09-27 12:00:00' });
+s.seen('s_100x200_222', { by: '222', at: '2026-09-27 12:00:00' });
+s.seen('s_300x400_111', { by: '111', at: '2026-09-27 12:00:00' });
+s.events([
+  { at: '2026-09-27 12:00:01', kind: 'open', box: 's_100x200_111', uid: '111', name: 'Seth' },
+  { at: '2026-09-27 12:00:02', kind: 'open', box: 's_100x200_111', uid: '111', name: 'proxy' },
+], 'stand');
+ok('a stash owner is named after the last event that named them, "proxy" not counting', admin.boxes().boxes.find((b) => b.box_id === 's_100x200_111').owner_name, 'Seth');
+ok('a player nobody named stays a number', admin.boxes().boxes.find((b) => b.box_id === 's_100x200_222').owner_name, '');
+ok('the placer is named beside the number when an event named them', admin.boxes().boxes.find((b) => b.box_id === 's_100x200_111').placed_by_name, 'Seth');
+ok('a stash page lists the other stashes of its locker alone', admin.box({ id: 's_100x200_111' }).box.siblings.map((x) => [x.box_id, x.owner, x.owner_name]), [['s_100x200_222', '222', '']]);
+ok('a plain box has no siblings', admin.box({ id: BOX }).box.siblings, []);
+ok('the list answers one locker per anchor', admin.boxes().lockers.filter((l) => /^[13]00x/.test(l.anchor)).map((l) => [l.anchor, l.pos, l.stashes.map((x) => x.owner)]), [['100x200', '100 0 200', ['111', '222']], ['300x400', '300 0 400', ['111']]]);
+ok('a stash id labels its locker', admin.label({ id: 's_100x200_222', name: 'Hangar', place: 'by the gate', admin: 'owner' }), { ok: true, key: 'locker:100x200', name: 'Hangar', place: 'by the gate' });
+ok('and every stash of that locker wears it', admin.boxes().boxes.filter((b) => b.box_id.startsWith('s_100x200')).map((b) => b.name), ['Hangar', 'Hangar']);
+ok('and the other locker does not', admin.box({ id: 's_300x400_111' }).box.name, '');
+ok('the locker page answers its spot, label and stashes by name', (() => { const l = admin.locker({ anchor: '100x200' }).locker; return [l.pos, l.name, l.stashes.map((x) => x.owner_name || x.owner)]; })(), ['100 0 200', 'Hangar', ['Seth', '222']]);
+ok('an unknown locker is refused', admin.locker({ anchor: '9x9' }), { ok: false, why: 'unknown locker' });
+ok('a locker can be labelled by its key', admin.label({ id: 'locker:300x400', name: 'Shed', admin: 'owner' }).name, 'Shed');
+ok('the player page names the player', admin.player({ uid: '111' }).name, 'Seth');
+ok('an event the mod signed "proxy" is shown under the player\'s name', admin.player({ uid: '111' }).events.filter((e) => e.kind === 'open').map((e) => e.name), ['Seth', 'Seth']);
+
 
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();

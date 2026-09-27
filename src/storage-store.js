@@ -6,6 +6,7 @@
 
 import { createHash } from 'node:crypto';
 import { buildChunk, parseChunk, stampNow, typesOf, unplace } from './storage-wire.js';
+import { Xchg } from './storage-xchg.js';
 
 const DDL = [
   `CREATE TABLE IF NOT EXISTS storage_boxes (
@@ -93,6 +94,16 @@ const DDL = [
      admin     TEXT NOT NULL DEFAULT ''
    )`,
   `CREATE INDEX IF NOT EXISTS storage_events_box ON storage_events(box_id, id)`,
+  // THE ADMIN'S OWN WORDS FOR A BOX OR A LOCKER (owner, 2026-09-27): a
+  // name and where it stands, empty by default, never read by the game.
+  // Keyed by the box id, or by locker:<anchor> for a personal stash's
+  // locker -- one label for the locker, whoever's stash is looked at.
+  `CREATE TABLE IF NOT EXISTS storage_labels (
+     key   TEXT PRIMARY KEY,
+     name  TEXT NOT NULL DEFAULT '',
+     place TEXT NOT NULL DEFAULT '',
+     at    TEXT NOT NULL DEFAULT ''
+   )`,
   `CREATE INDEX IF NOT EXISTS storage_events_uid ON storage_events(uid, id)`,
 ];
 
@@ -109,6 +120,22 @@ export class StorageStore {
     // missing.
     const cols = this.db.prepare('PRAGMA table_info(storage_boxes)').all().map((c) => c.name);
     if (!cols.includes('open_by')) this.db.exec(`ALTER TABLE storage_boxes ADD COLUMN open_by TEXT NOT NULL DEFAULT ''`);
+    // The labels lived on the box rows for one morning (2026-09-27) before
+    // they moved to storage_labels, keyed by box or locker. A database from
+    // that morning carries them over -- a stash's label to its locker --
+    // and loses the two columns.
+    if (cols.includes('name') && cols.includes('place')) {
+      const carry = this.db.prepare(`SELECT box_id, name, place FROM storage_boxes WHERE name != '' OR place != ''`).all();
+      const put = this.db.prepare(`INSERT OR IGNORE INTO storage_labels(key, name, place, at) VALUES (?, ?, ?, ?)`);
+      for (const r of carry) put.run(StorageStore.labelKey(r.box_id), r.name, r.place, stampNow());
+      for (const gone of ['name', 'place']) {
+        try {
+          this.db.exec(`ALTER TABLE storage_boxes DROP COLUMN ${gone}`);
+        } catch {
+          // an older SQLite keeps the column; it is empty and unread
+        }
+      }
+    }
     const q = (sql) => this.db.prepare(sql);
     this.q = {
       boxGet: q('SELECT * FROM storage_boxes WHERE box_id = ?'),
@@ -139,6 +166,16 @@ export class StorageStore {
       boxCurrent: q(`UPDATE storage_boxes SET current_version = ?, cache_stamp = '', cache_size = 0
                      WHERE box_id = ?`),
       boxCache: q('UPDATE storage_boxes SET cache_stamp = ?, cache_size = ? WHERE box_id = ?'),
+      labelGet: q('SELECT name, place FROM storage_labels WHERE key = ?'),
+      labelSet: q(`INSERT INTO storage_labels(key, name, place, at) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(key) DO UPDATE SET name = excluded.name, place = excluded.place, at = excluded.at`),
+      labelsAll: q('SELECT key, name, place FROM storage_labels'),
+      // The last name each player was seen with, off the events. Not
+      // "proxy": the mod signs the fill of a box with that word instead of
+      // the opener's name (OZS_Proxy, RequestOpenAs), and it would
+      // otherwise be the latest name of everyone who opens boxes.
+      evNames: q(`SELECT uid, name FROM storage_events
+                  WHERE id IN (SELECT MAX(id) FROM storage_events WHERE uid != '' AND name != '' AND name != 'proxy' GROUP BY uid)`),
       boxRemoved: q(`UPDATE storage_boxes SET status = 'removed', removed_at = ? WHERE box_id = ?`),
       boxBack: q(`UPDATE storage_boxes SET status = 'closed', removed_at = '' WHERE box_id = ?`),
       boxIds: q(`SELECT box_id FROM storage_boxes WHERE status != 'removed' ORDER BY box_id`),
@@ -730,6 +767,47 @@ export class StorageStore {
 
   boxes() {
     return this.q.boxesAll.all();
+  }
+
+  // WHAT A LABEL IS KEYED BY. A plain box by its id; a personal stash by
+  // its locker, because the locker is the thing an admin names and every
+  // player's stash there is the same locker (owner, 2026-09-27). A key
+  // already of the locker form stays.
+  static labelKey(id) {
+    const s = String(id || '');
+    if (s.startsWith('locker:')) return s;
+    const split = Xchg.splitId(s);
+    return split.kind === 'stash' ? `locker:${split.anchor}` : s;
+  }
+
+  // The admin's own words for a box or a locker: a name, and where it
+  // stands. Trimmed and capped; empty is allowed, because clearing is a
+  // label too.
+  label(id, { name = '', place = '' } = {}, at = stampNow()) {
+    const key = StorageStore.labelKey(id);
+    if (!key) return { ok: false, why: 'no key' };
+    const n = String(name ?? '').trim().slice(0, 64);
+    const p = String(place ?? '').trim().slice(0, 200);
+    this.q.labelSet.run(key, n, p, at);
+    return { ok: true, key, name: n, place: p };
+  }
+
+  labelOf(id) {
+    return this.q.labelGet.get(StorageStore.labelKey(id)) || { name: '', place: '' };
+  }
+
+  labels() {
+    const m = new Map();
+    for (const r of this.q.labelsAll.all()) m.set(r.key, { name: r.name, place: r.place });
+    return m;
+  }
+
+  // Whose stash is whose, by name: the last name every player was seen
+  // with, so the admin page need not show SteamIDs alone.
+  names() {
+    const m = new Map();
+    for (const r of this.q.evNames.all()) m.set(r.uid, r.name);
+    return m;
   }
 
   // One parked root back into its box, unplaced; only into a closed box.

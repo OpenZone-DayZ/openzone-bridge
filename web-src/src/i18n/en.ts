@@ -287,4 +287,13 @@ export const en = {
   blocked_text: 'The server started at {since} and this mod never booted since; the bridge blocks the section until a boot arrives. Add the mod to the server, restart it, and this page unlocks by itself.',
   blocked_others: 'Loaded on it',
   blocked_again: 'Check again',
+  name: 'Name',
+  place: 'Where it stands',
+  label_hint: 'For admins only; the game never shows these',
+  label_save: 'Save',
+  label_saved: 'Saved',
+  whose_stash: 'Whose stash',
+  locker: 'Locker',
+  stashes_n: 'stashes: {n}',
+  locker_help: 'One stash per player at this locker; open a player to see theirs.',
 };

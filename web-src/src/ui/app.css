@@ -156,6 +156,7 @@ table.grid tr.clickable { cursor: pointer; }
 .map .gridline { position: absolute; background: var(--rule); }
 .map .pin { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--accent); border: 1px solid var(--rail); cursor: pointer; }
 .map .pin.open { background: var(--ok); }
+.map .pin.locker { background: var(--alert, var(--accent)); border-radius: 2px; }
 .map .pin:hover { transform: scale(1.5); z-index: 2; }
 .map .label { position: absolute; background: var(--panel); color: var(--text); font: var(--font-small); padding: 2px 6px; border-radius: 3px; border: 1px solid var(--edge); pointer-events: none; transform: translate(8px, -50%); white-space: nowrap; z-index: 3; }
 

@@ -8,6 +8,7 @@
 import { randomBytes } from 'node:crypto';
 import { stampNow } from './storage-wire.js';
 import { Xchg } from './storage-xchg.js';
+import { StorageStore } from './storage-store.js';
 
 // The difference between two versions as classes, counted: what a rollback
 // from `a` to `b` makes disappear and appear. Every node of every root
@@ -101,6 +102,55 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
   }
 
   const bad = (why) => ({ ok: false, why });
+
+  // The locker's spot in the world, out of the anchor's whole metres.
+  const anchorPos = (anchor) => {
+    const m = /^(\d+)x(\d+)$/.exec(String(anchor || ''));
+    return m ? `${m[1]} 0 ${m[2]}` : '';
+  };
+  // Every row with the words that belong to it: whose and by whom, by
+  // name where an event ever named them; the label of the box or of its
+  // locker.
+  const decorate = (server, names, labels) => {
+    const seen = inWorld(server);
+    return (b) => {
+      const row = seen(b);
+      // A stash's row is made by its first hand-over, which names no class;
+      // there is only one class it can be.
+      if (row.kind === 'stash' && !row.class) row.class = 'OZ_PersonalStash';
+      const label = labels.get(StorageStore.labelKey(row.box_id)) || { name: '', place: '' };
+      row.owner_name = row.owner ? (names.get(row.owner) || '') : '';
+      row.placed_by_name = row.placed_by ? (names.get(row.placed_by) || '') : '';
+      row.name = label.name;
+      row.place = label.place;
+      return row;
+    };
+  };
+  // The lockers: one entry per anchor with every player's stash there.
+  const lockersOf = (rows) => {
+    const byAnchor = new Map();
+    for (const r of rows) {
+      if (r.kind !== 'stash' || !r.anchor || r.status === 'removed') continue;
+      let l = byAnchor.get(r.anchor);
+      if (!l) {
+        l = { anchor: r.anchor, pos: anchorPos(r.anchor), name: r.name, place: r.place, last_seen_at: '', stashes: [] };
+        byAnchor.set(r.anchor, l);
+      }
+      l.stashes.push({ box_id: r.box_id, owner: r.owner, owner_name: r.owner_name, roots: r.roots, entities: r.entities, status: r.status, last_seen_at: r.last_seen_at, in_world: r.in_world });
+      if (r.last_seen_at > l.last_seen_at) l.last_seen_at = r.last_seen_at;
+    }
+    return [...byAnchor.values()];
+  };
+  // PLAYERS BY NAME, NOT BY NUMBER ALONE (owner, 2026-09-27). An event
+  // the mod signed "proxy" -- the fill of a box on the opener's behalf --
+  // is shown under the opener's own name, and one with no name at all
+  // under the last name that player was seen with.
+  const nameEvents = (list, names = store.names()) => {
+    for (const e of list) {
+      if (e.uid && (!e.name || e.name === 'proxy')) e.name = names.get(e.uid) || e.name;
+    }
+    return list;
+  };
   const limitOf = (v) => Math.min(1000, Math.max(1, Math.trunc(Number(v)) || 100));
   const dropCache = (id) => {
     if (xchg) xchg.dropCache(id);
@@ -162,25 +212,72 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
   return {
     // Every box, each with whether the chosen server had it in the world at
     // its last boot.
-    boxes: ({ server } = {}) => ({ ok: true, boxes: store.boxes().map(inWorld(server)) }),
+    boxes: ({ server } = {}) => {
+      const rows = store.boxes().map(decorate(server, store.names(), store.labels()));
+      return { ok: true, boxes: rows, lockers: lockersOf(rows) };
+    },
 
     box: ({ id, server }) => {
       const box = archived(id);
       if (!box) return bad('unknown box');
       const items = store.itemsOf(box.box_id);
-      return { ok: true, box: { ...inWorld(server)(box), cells: cellsOf(box.class, items, sizesFor(server)) }, items, versions: store.versionsOf(box.box_id, 20) };
+      const names = store.names();
+      const seen = decorate(server, names, store.labels())(box);
+      seen.cells = cellsOf(seen.class, items, sizesFor(server));
+      // A LOCKER HOLDS ONE STASH PER PLAYER, and an admin looking at one of
+      // them wants the others within reach (owner, 2026-09-27): the stashes
+      // at the same anchor, by name, for the page's picker.
+      seen.siblings = [];
+      if (seen.kind === 'stash') {
+        seen.locker = { anchor: seen.anchor, pos: anchorPos(seen.anchor), name: seen.name, place: seen.place };
+        for (const other of store.boxes()) {
+          if (other.box_id === box.box_id || other.status === 'removed') continue;
+          const split = Xchg.splitId(other.box_id);
+          if (split.kind !== 'stash' || split.anchor !== seen.anchor) continue;
+          seen.siblings.push({ box_id: other.box_id, owner: split.owner, owner_name: names.get(split.owner) || '', roots: other.roots, entities: other.entities, status: other.status, last_seen_at: other.last_seen_at });
+        }
+      }
+      return { ok: true, box: seen, items, versions: store.versionsOf(box.box_id, 20) };
+    },
+
+    // One locker: its spot, its label and every player's stash there, by
+    // name (owner, 2026-09-27: "make it possible to pick whose stash").
+    locker: ({ anchor, server }) => {
+      const rows = store.boxes().map(decorate(server, store.names(), store.labels()));
+      const l = lockersOf(rows).find((x) => x.anchor === String(anchor || ''));
+      if (!l) return bad('unknown locker');
+      return { ok: true, locker: l };
+    },
+
+    // A name and a note on where a box or a locker stands, for admins only;
+    // the game never reads them (owner, 2026-09-27). Empty clears. A stash
+    // id labels its locker, and so does locker:<anchor>.
+    label: ({ id, name, place, admin }) => {
+      const key = StorageStore.labelKey(id);
+      if (!key.startsWith('locker:') && !archived(id)) return bad('unknown box');
+      const r = store.label(key, { name, place });
+      if (!r.ok) return r;
+      record('admin_label', String(id || '').startsWith('locker:') ? '' : String(id || ''), admin, `${key}: name "${r.name}", place "${r.place}"`);
+      return r;
     },
 
     history: ({ id, limit }) => {
       const box = archived(id);
       if (!box) return bad('unknown box');
       const n = limitOf(limit);
-      return { ok: true, events: store.eventsOf(box.box_id, n), versions: store.versionsOf(box.box_id, n) };
+      return { ok: true, events: nameEvents(store.eventsOf(box.box_id, n)), versions: store.versionsOf(box.box_id, n) };
     },
 
-    player: ({ uid, limit }) => ({ ok: true, events: store.eventsBy(String(uid || ''), limitOf(limit)) }),
+    player: ({ uid, limit }) => {
+      const who = String(uid || '');
+      const names = store.names();
+      return { ok: true, name: names.get(who) || '', events: nameEvents(store.eventsBy(who, limitOf(limit)), names) };
+    },
 
-    find: ({ type }) => ({ ok: true, items: store.find(String(type || '')), last: store.lastTake(String(type || '')) }),
+    find: ({ type }) => {
+      const last = store.lastTake(String(type || ''));
+      return { ok: true, items: store.find(String(type || '')), last: last ? nameEvents([last])[0] : last };
+    },
 
     parked: () => ({ ok: true, parked: store.parked() }),
 
@@ -402,7 +499,7 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
 
     result: ({ ref }) => ({ ok: true, result: store.resultOf(String(ref || '')) }),
 
-    journal: ({ limit, server }) => ({ ok: true, events: store.journal(limitOf(limit), String(server || '')) }),
+    journal: ({ limit, server }) => ({ ok: true, events: nameEvents(store.journal(limitOf(limit), String(server || ''))) }),
 
     // The game servers the bridge has heard from, for the site's switch.
     servers: () => ({ ok: true, servers: health ? (health().servers || []) : [] }),

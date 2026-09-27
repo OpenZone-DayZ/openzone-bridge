@@ -9,7 +9,7 @@ import { go } from '../app/router';
 import { useToast } from '../app/toasts';
 import { Badge, Confirm, Field, HealthBar, Loading, Notice, Panel } from '../ui/bits';
 import { Table, type Col } from '../ui/Table';
-import { StatusBadge } from './BoxesPage';
+import { LockerLink, PlayerLink, StatusBadge } from './BoxesPage';
 import { SuggestInput } from '../ui/SuggestInput';
 import { useClassIndex } from '../core/classes/useClassIndex';
 import { sizeOf, type ClassIndex } from '../core/classes/classIndex';
@@ -75,7 +75,7 @@ export function BoxPage({ id }: { id: string }) {
 
   return (
     <>
-      <h1>{s('box')} <span className="mono">{id}</span> <StatusBadge status={box.status} /></h1>
+      <h1>{s('box')} <span className="mono">{id}</span> {box.name ? <span className="muted">· {box.name}</span> : null} <StatusBadge status={box.status} /></h1>
       <Panel>
         <div className="facts">
           <span className="k">{s('cls')}</span><span>{box.class} ({sizeName})</span>
@@ -83,10 +83,13 @@ export function BoxPage({ id }: { id: string }) {
           <span className="k">{s('items')}</span><span>{items.length} ({s('roots').toLowerCase()}: {roots.filter(Boolean).length})</span>
           <span className="k">{s('cells')}</span><span>{box.cells ? `${box.cells.used} / ${box.cells.max}${box.cells.unknown ? ` (${box.cells.unknown} ${s('cells_unknown')})` : ''}` : '—'}</span>
           <span className="k">{s('pos')}</span><span className="mono">{box.pos || '—'}</span>
-          <span className="k">{s('placed_by')}</span><span>{box.placed_by || '—'} <span className="muted mono">{box.placed_at}</span></span>
+          <span className="k">{s('placed_by')}</span><span>{box.placed_by ? <PlayerLink uid={box.placed_by} name={box.placed_by_name} /> : '—'} <span className="muted mono">{box.placed_at}</span></span>
           <span className="k">{s('last_seen')}</span><span className="mono">{box.last_seen_at || '—'}</span>
+          {box.place ? <><span className="k">{s('place')}</span><span>{box.place}</span></> : null}
         </div>
+        <WhoseStash box={box} />
       </Panel>
+      <LabelForm id={id} name={box.name || ''} place={box.place || ''} onSaved={load} />
 
       <div className="toolbar">
         <input placeholder={s('filter')} value={filter} onChange={(e) => setFilter(e.target.value)} />
@@ -308,6 +311,68 @@ function MoveForm({ id, rootIdx, node, version, onDone, onClose }: { id: string;
   );
 }
 
+// A name and a note on where the box stands, the admin's own words: the
+// game never shows them; the list, the map and this page do (owner,
+// 2026-09-27). Empty by default, and saving empty clears. On a stash the
+// label is the locker's, shared by every player's stash there.
+export function LabelForm({ id, name: had, place: hadPlace, onSaved }: { id: string; name: string; place: string; onSaved: () => Promise<void> }) {
+  const { s } = useLang();
+  const toast = useToast();
+  const [name, setName] = useState(had);
+  const [place, setPlace] = useState(hadPlace);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setName(had);
+    setPlace(hadPlace);
+  }, [id, had, hadPlace]);
+  const dirty = name !== had || place !== hadPlace;
+  const save = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ name: string; place: string }>('storage', 'label', { id, name, place });
+      if (!r.ok) {
+        toast(`${s('error')}: ${r.why}`, true);
+        return;
+      }
+      toast(s('label_saved'));
+      await onSaved();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Panel tight>
+      <div className="row">
+        <Field label={s('name')}><input value={name} onChange={(e) => setName(e.target.value)} size={24} maxLength={64} /></Field>
+        <Field label={s('place')}><input value={place} onChange={(e) => setPlace(e.target.value)} size={40} maxLength={200} /></Field>
+        <button type="button" className="primary" disabled={busy || !dirty} onClick={save}>{s('label_save')}</button>
+        <span className="muted small">{s('label_hint')}</span>
+      </div>
+    </Panel>
+  );
+}
+
+// One locker, one stash per player: on a stash's page the others of the
+// same locker are one pick away, by name (owner, 2026-09-27: "on a
+// personal stash you cannot open a particular player's stash").
+function WhoseStash({ box }: { box: Box }) {
+  const { s } = useLang();
+  if (box.kind !== 'stash') return null;
+  const others = box.siblings || [];
+  const who = (owner: string, name: string) => (name ? `${name} (${owner})` : owner);
+  return (
+    <div className="row" style={{ marginTop: 8 }}>
+      <Field label={s('whose_stash')}>
+        <select className="mono" value={box.box_id} onChange={(e) => go('storage', 'box', e.target.value)}>
+          <option value={box.box_id}>{who(box.owner || '', box.owner_name || '')}</option>
+          {others.map((x) => <option key={x.box_id} value={x.box_id}>{who(x.owner, x.owner_name)} · {x.roots}</option>)}
+        </select>
+      </Field>
+      <span className="muted small"><LockerLink anchor={box.anchor || ''} /> · {s('stashes_n', { n: others.length + 1 })}</span>
+    </div>
+  );
+}
+
 // Un-archiving, on the page of the deleted box itself. The engine's id
 // never returns, so the cargo goes into a box that exists: the target is
 // picked from the closed ones rather than typed, because an id is 40-odd
@@ -417,7 +482,7 @@ function Events({ events }: { events: Event[] }) {
   const cols: Col<Event>[] = [
     { key: 'when', label: s('when'), mono: true, render: (e) => e.at, sort: (e) => e.at },
     { key: 'kind', label: s('kind'), render: (e) => e.kind, sort: (e) => e.kind },
-    { key: 'who', label: s('who'), render: (e) => e.name || e.uid, sort: (e) => e.name || e.uid },
+    { key: 'who', label: s('who'), render: (e) => (e.uid ? <PlayerLink uid={e.uid} name={e.name} /> : e.name), sort: (e) => e.name || e.uid },
     { key: 'cls', label: s('cls'), mono: true, render: (e) => e.type },
     { key: 'qty', label: s('qty'), num: true, render: (e) => e.qty || '' },
     { key: 'cell', label: s('cell'), mono: true, render: (e) => eventCell(e) },

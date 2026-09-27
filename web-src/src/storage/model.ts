@@ -20,6 +20,19 @@ export type Box = {
   kind?: 'box' | 'stash';
   anchor?: string;
   owner?: string;
+  // The last names the owner and the placer were seen with
+  // (storage-admin.js, off the events); empty when no event ever named
+  // them.
+  owner_name?: string;
+  placed_by_name?: string;
+  // The admin's own words: a name and where the box stands, empty by
+  // default (owner, 2026-09-27). A stash carries its locker's.
+  name?: string;
+  place?: string;
+  // A stash only: the other stashes of the same locker, for the picker,
+  // and the locker itself.
+  siblings?: Sibling[];
+  locker?: { anchor: string; pos: string; name: string; place: string };
   // The cargo in cells, counted by the bridge out of the server's class
   // sizes (the box page only): used, the box's own, and how many items the
   // dump could not size (counted as one cell each).
@@ -29,6 +42,16 @@ export type Box = {
   roots?: number;
   entities?: number;
 };
+
+export type Sibling = { box_id: string; owner: string; owner_name: string; roots: number; entities?: number; status: string; last_seen_at?: string; in_world?: string };
+
+// One locker: its spot in whole metres, the admin's label, every player's
+// stash there.
+export type Locker = { anchor: string; pos: string; name: string; place: string; last_seen_at: string; stashes: Sibling[] };
+
+// The name beside the number: "Seth (7656...)" when an event ever named
+// them, the number alone otherwise.
+export const named = (uid: string, name?: string): string => (uid ? (name ? `${name} (${uid})` : uid) : '');
 
 export type Item = {
   box_id: string;

@@ -21,6 +21,7 @@
 //   node scripts/storage.mjs mark-closed <id>              (a box SQL believes open that the world does not have)
 //   node scripts/storage.mjs mark-removed <id>             (archive a box the world lost, keeping everything it held)
 //   node scripts/storage.mjs edit <id> <root> <node> [qty=N] [health=N] [reset]
+//   node scripts/storage.mjs label <id|locker:<anchor>> [name] [where it stands...]  (a name and a place; a stash id labels its locker; empty clears)
 //   node scripts/storage.mjs diff <a> <b>                  (classes that go and come from version a to b)
 //   node scripts/storage.mjs health
 //   node scripts/storage.mjs close <id>       (live: the engine closes it now)
@@ -46,6 +47,7 @@ const USAGE = `usage: node scripts/storage.mjs <command> [args]
   rollback <id> <version> | unpark <parkedId> | discard <parkedId> | give <id> <class> [qty] | empty <id>
   shelve <id> <root> | move <from> <root> <to> | restore <stranded> <to> | mark-closed <id> | mark-removed <id>
   edit <id> <root> <node> [qty=N] [health=N] [reset]
+  label <id|locker:<anchor>> [name] [where it stands...]  (a name and a place for admins; a stash id labels its locker; empty clears)
   close <id> | remove <id> | report <id> | result <ref>`;
 
 if (!cmd || cmd === 'help' || cmd === '--help') {
@@ -224,6 +226,12 @@ switch (cmd) {
     }
     const r = await call('edit', { id: args[0], root: args[1], node: args[2], ...extra });
     console.log(`${r.type} edited${r.reset ? ', mod state reset' : ''}: version ${r.version}; it takes effect at the next open`);
+    break;
+  }
+  case 'label': {
+    need(1, 'an id');
+    const r = await call('label', { id: args[0], name: args[1] || '', place: args.slice(2).join(' ') });
+    console.log(`labelled ${r.key}: name "${r.name}", place "${r.place}"`);
     break;
   }
   case 'diff': {
