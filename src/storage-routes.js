@@ -161,10 +161,17 @@ export function storageRoutes({ store, xchg, admin }) {
       if (!xchg) return off;
       const id = boxId(Json);
       if (!id) return bad('bad box id');
+      // A CONTINUATION (proxy design 2026-09-24, section 22): the game built
+      // the first `from` roots of the record, parked one it could not read,
+      // and asks for the rest. The rest goes out as a file of its own, so the
+      // box's cache stays whole; `from` comes back in the answer so the game
+      // can tell a bridge that understood it from one that did not.
+      const from = Math.max(0, Number(Json.from) | 0);
       const box = store.boxOf(id);
       if (box && box.status === 'removed') return bad('unknown box');
       const me = String(ServerId || '');
       if (!box) {
+        if (from > 0) return bad('nothing to continue: the box has no record');
         // A box the engine has and SQL does not: new, and empty (design
         // section 3.3, status none). Its first close makes its first version.
         store.seen(id, { by: String(Json.by || '') });
@@ -175,11 +182,35 @@ export function storageRoutes({ store, xchg, admin }) {
       // better; ANOTHER server is refused, or both would hold the record
       // (review 2026-09-26, B6).
       if (box.status === 'open' && box.open_by && me && box.open_by !== me) return bad(`the box is open on another server (${box.open_by})`);
-      if (box.status === 'open') console.warn(`[storage] open of ${id}, which SQL believed open already; the engine knows better`);
+      if (box.status === 'open' && from === 0) console.warn(`[storage] open of ${id}, which SQL believed open already; the engine knows better`);
       const cur = store.currentChunks(id);
       if (!cur || cur.chunks.length === 0) {
         store.markOpen(id, { server: me });
         return { ok: true, empty: true };
+      }
+      if (from > 0) {
+        if (from > cur.chunks.length) return bad(`cannot continue from root ${from}: the record has ${cur.chunks.length}`);
+        const rest = cur.chunks.slice(from);
+        if (rest.length === 0) {
+          store.markOpen(id, { server: me });
+          return { ok: true, empty: true, from };
+        }
+        let restEntities = 0;
+        try {
+          for (const c of rest) restEntities += parseChunk(c).nodes.length;
+        } catch (e) {
+          return bad(`a stored root cannot be parsed: ${e.message}`);
+        }
+        let name;
+        try {
+          name = xchg.writeRest(id, buildFile({ saveVer: cur.saveVer, stamp: cur.stamp, boxClass: cur.boxClass, boxId: id }, rest));
+        } catch (e) {
+          console.warn(`[storage] open of ${id} from root ${from}: rest write failed (${e.code || e.message})`);
+          return bad('the exchange directory is not writable');
+        }
+        store.markOpen(id, { server: me });
+        console.log(`[storage] open of ${id} goes on from root ${from}: ${rest.length} root(s) in ${name}`);
+        return { ok: true, file: name, stamp: cur.stamp, roots: rest.length, entities: restEntities, from };
       }
       const info = xchg.cacheInfo(id);
       const valid = info && box.cache_size > 0 && info.size === box.cache_size && info.stamp === cur.stamp;

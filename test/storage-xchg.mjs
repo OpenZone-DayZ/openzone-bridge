@@ -71,11 +71,22 @@ ok('dropCache removes it', existsSync(x.cachePath(BOX)), false);
 x.dropCache(BOX);
 ok('dropping twice is fine', true, true);
 
+console.log('the rest of a record for an open that goes on');
+
+ok('writeRest names the rest file', x.writeRest(BOX, rebuilt), `${BOX}.rest.bin`);
+ok('which is not the cache', [existsSync(x.restPath(BOX)), existsSync(x.cachePath(BOX))], [true, false]);
+ok('and leaves no .part of its own behind', existsSync(x.restPath(BOX) + '.part'), false);
+ok('the rest file parses as a record', parseHeader(readFileSync(x.restPath(BOX))).stamp, '2026-09-19 05:20:00');
+x.dropCache(BOX);
+ok('dropCache removes the rest file too', existsSync(x.restPath(BOX)), false);
+
 console.log('sweep');
 
 writeFileSync(join(dir, `${OTHER}.bin.part`), 'half');
 writeFileSync(join(dir, `${OTHER}.bin`), file('2026-09-19 05:21:00'));
 writeFileSync(x.cachePath(BOX), file('2026-09-19 05:22:00'));
+writeFileSync(join(dir, `${OTHER}.rest.bin`), file('2026-09-19 05:21:30'));
+writeFileSync(x.restPath(BOX), file('2026-09-19 05:22:30'));
 const fresh = `${BOX}-20260919-052300.bin`;
 const stale = `${BOX}-20260919-040000.bin`;
 writeFileSync(join(dir, fresh), bytes);
@@ -83,7 +94,10 @@ writeFileSync(join(dir, stale), bytes);
 const old = new Date(Date.now() - 10 * 60 * 1000);
 utimesSync(join(dir, stale), old, old);
 const removed = x.sweep([BOX]).sort();
-ok('sweep drops .part files, stale close files and caches of unknown boxes', removed, [`${OTHER}.bin`, `${OTHER}.bin.part`, stale].sort());
+ok('sweep drops .part files, stale close files, caches and rest files of unknown boxes', removed, [`${OTHER}.bin`, `${OTHER}.bin.part`, `${OTHER}.rest.bin`, stale].sort());
+ok('and keeps a fresh rest file of a known box', existsSync(x.restPath(BOX)), true);
+utimesSync(x.restPath(BOX), old, old);
+ok('a rest file older than five minutes goes even for a known box', x.sweep([BOX]), [`${BOX}.rest.bin`]);
 ok('and keeps a fresh close file and a known cache', [existsSync(join(dir, fresh)), existsSync(x.cachePath(BOX))], [true, true]);
 ok('a fresh close file is untouched', statSync(join(dir, fresh)).size, bytes.length);
 

@@ -119,6 +119,11 @@ hub). The game writes a box's contents as one file into
 `/v1/storage/close`; the bridge keeps the roots byte for byte in SQLite,
 promotes the file into the box's cache, and answers `/v1/storage/open`
 with that cache, rebuilding it only after an admin changed the version.
+A root the game cannot read it parks (`/v1/storage/park`) and then asks
+`/v1/storage/open` again with `from`, the count of roots it has built: the
+answer is a file of its own, `<box id>.rest.bin`, holding the rest of the
+record, with `from` echoed so the game can tell this bridge from an older
+one that would hand out the whole record twice.
 Without `STORAGE_XCHG_DIR` every storage route refuses and the game shows
 its boxes as unavailable.
 

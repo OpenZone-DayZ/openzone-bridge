@@ -135,11 +135,22 @@ try {
   ok('park answers the new version', [parked.ok, parked.version, parked.type], [true, 2, 'PlateCarrierPouches']);
   ok('a park without a root index is refused', await call('/v1/storage/park', { id: BOX, stamp: 'x', why: 'refused' }), { ok: false, why: 'bad root index' });
   ok('park drops the cache', existsSync(join(xdir, `${BOX}.bin`)), false);
+  // The open goes on: the game built root 0, root 1 is parked and gone from
+  // the record, and it asks for the rest from root 1 on.
+  const rest = await call('/v1/storage/open', { id: BOX, by: '76561198000000001', from: 1 });
+  ok('a continuation names a rest file of its own', [rest.ok, rest.file, rest.roots, rest.entities, rest.from], [true, `${BOX}.rest.bin`, 1, 1, 1]);
+  const restFile = parseFile(readFileSync(join(xdir, `${BOX}.rest.bin`)));
+  ok('the rest file holds the roots after the parked one, byte for byte', restFile.roots.map((r) => hex(r.bytes)), [hex(chunks[2])]);
+  ok('a continuation from the end is empty', await call('/v1/storage/open', { id: BOX, by: '', from: 2 }), { ok: true, empty: true, from: 2 });
+  ok('a continuation past the end is refused', await call('/v1/storage/open', { id: BOX, by: '', from: 5 }), { ok: false, why: 'cannot continue from root 5: the record has 2' });
+  ok('a continuation of a box without a record is refused', await call('/v1/storage/open', { id: '7-7-7-7', by: '', from: 1 }), { ok: false, why: 'nothing to continue: the box has no record' });
+  ok('the rest file is not the cache', existsSync(join(xdir, `${BOX}.bin`)), false);
   const again = await call('/v1/storage/open', { id: BOX, by: '76561198000000001' });
   ok('the next open rebuilds it with two roots', [again.ok, again.roots, again.entities], [true, 2, 2]);
   const rebuilt = parseFile(readFileSync(join(xdir, `${BOX}.bin`)));
   ok('the rebuilt cache holds the surviving roots byte for byte', rebuilt.roots.map((r) => hex(r.bytes)), [hex(chunks[0]), hex(chunks[2])]);
   ok('and carries the version stamp', rebuilt.header.stamp, again.stamp);
+  ok('the rest file carried the same version stamp', restFile.header.stamp, again.stamp);
 
   // Classes at boot: Paper left the server, the pouch is back.
   const cls = await call('/v1/storage/classes', { missing: ['Paper'], present: ['PlateCarrierPouches', 'SmallProtectorCase'] });

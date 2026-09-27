@@ -72,6 +72,25 @@ export class Xchg {
     return join(this.dir, this.cacheName(boxId));
   }
 
+  // THE REST OF A RECORD for an open that goes on past a parked root
+  // (proxy design 2026-09-24, section 22): a file of its own, so the cache
+  // stays the whole record. Rewritten at every continuation, dropped with
+  // the cache, swept when stale.
+  restName(boxId) {
+    return `${boxId}.rest.bin`;
+  }
+
+  restPath(boxId) {
+    return join(this.dir, this.restName(boxId));
+  }
+
+  writeRest(boxId, buf) {
+    const p = this.restPath(boxId);
+    writeFileSync(`${p}.part`, buf);
+    renameSync(`${p}.part`, p);
+    return this.restName(boxId);
+  }
+
   readClose(name, boxId) {
     if (!Xchg.closeName(name, boxId)) throw new WireError('not a close file name of this box');
     return readFileSync(join(this.dir, name));
@@ -122,6 +141,7 @@ export class Xchg {
 
   dropCache(boxId) {
     try { unlinkSync(this.cachePath(boxId)); } catch { /* no cache to drop */ }
+    try { unlinkSync(this.restPath(boxId)); } catch { /* no rest to drop */ }
   }
 
   sweep(knownIds, now = Date.now()) {
@@ -134,6 +154,8 @@ export class Xchg {
         drop = true;
       } else if (CLOSE_NAME.test(name) || OP_NAME.test(name)) {
         drop = now - statSync(p).mtimeMs > STALE_MS;
+      } else if (name.endsWith('.rest.bin')) {
+        drop = !known.has(name.slice(0, -9)) || now - statSync(p).mtimeMs > STALE_MS;
       } else if (name.endsWith('.bin')) {
         drop = !known.has(name.slice(0, -4));
       }
