@@ -17,8 +17,12 @@ export function BoxLink({ id }: { id: string }) {
   return <a className="mono" href={href('storage', 'box', id)}>{id}</a>;
 }
 
-export function LockerLink({ anchor }: { anchor: string }) {
+// A locker by the engine's id of the item once the bridge has heard it
+// (the boot letter, or its placement), by its key alone before that;
+// either way the click opens the locker's page.
+export function LockerLink({ anchor, id }: { anchor: string; id?: string }) {
   const { s } = useLang();
+  if (id) return <a className="mono" href={href('storage', 'locker', anchor)} title={`${s('locker')} ${anchor}`}>{id}</a>;
   return <a href={href('storage', 'locker', anchor)}>{s('locker')} <span className="mono">{anchor}</span></a>;
 }
 
@@ -80,12 +84,17 @@ export function BoxesPage() {
       if (needle && !`${b.box_id} ${b.class} ${b.placed_by} ${b.placed_by_name || ''} ${b.pos} ${b.name || ''} ${b.place || ''}`.toLowerCase().includes(needle)) continue;
       out.push({ key: b.box_id, box: b });
     }
-    // A locker has no status and no presence of its own: it is listed
-    // under "kept" and "any", and under its own kind and size.
-    if ((status === 'live' || status === 'all') && !world && (!size || size === 'OZ_PersonalStash') && (!kind || kind === 'stash')) {
+    // A locker is never open or closed, so the status filter knows it only
+    // as kept or removed; its presence is the boot letter's word, as a
+    // box's is.
+    if ((status === 'live' || status === 'all' || status === 'removed') && (!size || size === 'OZ_PersonalStash') && (!kind || kind === 'stash')) {
       for (const l of lockers) {
+        const removed = l.status === 'removed';
+        if (status === 'live' && removed) continue;
+        if (status === 'removed' && !removed) continue;
+        if (world && (l.in_world || 'unknown') !== world) continue;
         const who = l.stashes.map((x) => `${x.owner} ${x.owner_name}`).join(' ');
-        if (needle && !`${l.anchor} ${l.pos} ${l.name} ${l.place} ${who}`.toLowerCase().includes(needle)) continue;
+        if (needle && !`${l.id} ${l.anchor} ${l.pos} ${l.name} ${l.place} ${l.placed_by} ${l.placed_by_name} ${who}`.toLowerCase().includes(needle)) continue;
         out.push({ key: `locker:${l.anchor}`, locker: l });
       }
     }
@@ -94,16 +103,16 @@ export function BoxesPage() {
 
   const sizeName = (cls: string) => (SIZES[cls] ? s(SIZES[cls].key) : cls);
   const cols: Col<Row>[] = [
-    { key: 'id', label: s('id'), render: (r) => (r.box ? <BoxLink id={r.box.box_id} /> : <LockerLink anchor={r.locker!.anchor} />), sort: (r) => (r.box ? r.box.box_id : `locker:${r.locker!.anchor}`) },
+    { key: 'id', label: s('id'), render: (r) => (r.box ? <BoxLink id={r.box.box_id} /> : <LockerLink anchor={r.locker!.anchor} id={r.locker!.id} />), sort: (r) => (r.box ? r.box.box_id : r.locker!.id || `locker:${r.locker!.anchor}`) },
     { key: 'cls', label: s('cls'), render: (r) => (r.box ? sizeName(r.box.class) : s('size_stash')), sort: (r) => (r.box ? r.box.class : 'OZ_PersonalStash') },
     { key: 'name', label: s('name'), render: (r) => (r.box || r.locker!).name || '', sort: (r) => (r.box || r.locker!).name || '' },
-    { key: 'status', label: s('status'), render: (r) => (r.box ? <><StatusBadge status={r.box.status} />{r.box.in_world === 'no' && r.box.status !== 'removed' && <> <Badge tone="bad">{s('st_absent')}</Badge></>}</> : <span className="muted">{s('stashes_n', { n: r.locker!.stashes.length })}</span>), sort: (r) => (r.box ? (r.box.in_world === 'no' && r.box.status !== 'removed' ? `${r.box.status} absent` : r.box.status) : 'locker') },
+    { key: 'status', label: s('status'), render: (r) => { const x = r.box || r.locker!; const gone = x.in_world === 'no' && x.status !== 'removed'; return <>{r.box ? <StatusBadge status={r.box.status} /> : (x.status === 'removed' ? <StatusBadge status="removed" /> : <span className="muted">{s('stashes_n', { n: r.locker!.stashes.length })}</span>)}{gone && <> <Badge tone="bad">{s('st_absent')}</Badge></>}</>; }, sort: (r) => { const x = r.box || r.locker!; return x.in_world === 'no' && x.status !== 'removed' ? `${x.status} absent` : x.status; } },
     { key: 'items', label: s('items'), num: true, render: (r) => (r.box ? r.box.entities ?? 0 : ''), sort: (r) => (r.box ? r.box.entities ?? 0 : -1) },
     { key: 'roots', label: s('roots'), num: true, render: (r) => (r.box ? r.box.roots ?? 0 : ''), sort: (r) => (r.box ? r.box.roots ?? 0 : -1) },
     { key: 'version', label: s('version'), num: true, render: (r) => (r.box ? r.box.current_version : ''), sort: (r) => (r.box ? r.box.current_version : -1) },
     { key: 'pos', label: s('pos'), mono: true, render: (r) => (r.box ? r.box.pos : r.locker!.pos), sort: (r) => (r.box ? r.box.pos : r.locker!.pos) },
     { key: 'place', label: s('place'), render: (r) => (r.box || r.locker!).place || '', sort: (r) => (r.box || r.locker!).place || '' },
-    { key: 'placed_by', label: s('placed_by'), render: (r) => (r.box ? <PlayerLink uid={r.box.placed_by} name={r.box.placed_by_name} /> : ''), sort: (r) => (r.box ? r.box.placed_by_name || r.box.placed_by : '') },
+    { key: 'placed_by', label: s('placed_by'), render: (r) => { const x = r.box || r.locker!; return <PlayerLink uid={x.placed_by || ''} name={x.placed_by_name} />; }, sort: (r) => { const x = r.box || r.locker!; return x.placed_by_name || x.placed_by || ''; } },
     { key: 'last_seen', label: s('last_seen'), mono: true, render: (r) => (r.box ? r.box.last_seen_at : r.locker!.last_seen_at), sort: (r) => (r.box ? r.box.last_seen_at : r.locker!.last_seen_at) },
   ];
 

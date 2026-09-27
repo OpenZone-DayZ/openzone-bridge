@@ -322,6 +322,17 @@ const later = s.keep({ versionsDays: 14, eventsDays: 1, now });
 ok('events past the window go', [later.events, s.eventsOf('5-6-7-8').length], [4, 0]);
 ok('the current version is still readable', s.currentChunks(P).chunks.map(hex), [hex(pc0), hex(pc2)]);
 
+console.log('lockers');
+ok('a key from a spot rounds to whole metres', StorageStore.anchorKeyAt('4694.3 339.0 10188.6'), '4694x10189');
+ok('and never goes below zero', StorageStore.anchorKeyAt('-3.2 0 4'), '0x4');
+ok('a boot letter\'s locker is remembered by its key with the engine\'s id', [s.lockerSeen('1-2-3-4', { key: '100x200', pos: '100.2 0 199.8', at: '2026-09-27 15:00:00' }), s.lockers().map((l) => [l.key, l.entity_id, l.pos, l.placed_at, l.removed_at])], [true, [['100x200', '1-2-3-4', '100.2 0 199.8', '2026-09-27 15:00:00', '']]]);
+ok('seen again, it keeps its placement and moves its last sight', (() => { s.lockerSeen('1-2-3-4', { key: '100x200', at: '2026-09-27 16:00:00' }); const l = s.lockers()[0]; return [l.placed_at, l.last_seen_at, l.pos]; })(), ['2026-09-27 15:00:00', '2026-09-27 16:00:00', '100.2 0 199.8']);
+ok('a new item on the same spot is a new placement under the same key', (() => { s.lockerSeen('5-6-7-8', { pos: '100 0 200', at: '2026-09-27 17:00:00', by: '111' }); const l = s.lockers()[0]; return [s.lockers().length, l.entity_id, l.placed_at, l.placed_by]; })(), [1, '5-6-7-8', '2026-09-27 17:00:00', '111']);
+ok('removed marks the locker by the engine\'s id', (() => { s.lockerRemoved('5-6-7-8', '2026-09-27 18:00:00'); return s.lockers()[0].removed_at; })(), '2026-09-27 18:00:00');
+ok('a placed event of a locker goes to the lockers, not the boxes', (() => { s.events([{ at: '2026-09-27 19:00:00', kind: 'placed', box: '9-8-7-6', uid: '222', type: 'OZ_StashAnchor', slot: '300x400', note: '300.4 12 400.1' }], 'stand'); return [s.boxOf('9-8-7-6'), s.lockers().find((l) => l.key === '300x400').entity_id]; })(), [null, '9-8-7-6']);
+ok('and a removed event too', (() => { s.events([{ at: '2026-09-27 19:30:00', kind: 'removed', box: '9-8-7-6', type: 'OZ_StashAnchor' }], 'stand'); return s.lockers().find((l) => l.key === '300x400').removed_at; })(), '2026-09-27 19:30:00');
+ok('seen at a boot, a removed locker is back', (() => { s.lockerSeen('9-8-7-6', { key: '300x400', at: '2026-09-27 20:00:00' }); return s.lockers().find((l) => l.key === '300x400').removed_at; })(), '');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();
 process.exit(fail ? 1 : 0);

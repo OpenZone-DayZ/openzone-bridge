@@ -19,17 +19,26 @@ export function storageRoutes({ store, xchg, admin }) {
       const boxes = (Array.isArray(Json?.boxes) ? Json.boxes : [])
         // `cls` is the game's spelling: `class` is a keyword in Enforce Script.
         .map((b) => ({ id: String(b?.id || ''), class: String(b?.class || b?.cls || ''), state: String(b?.state || ''), entities: Number(b?.entities) || 0, pos: String(b?.pos || '') }))
-        .filter((b) => Xchg.isBoxId(b.id));
+        .filter((b) => Xchg.isBoxId(b.id) && b.class !== 'OZ_StashAnchor');
+      // THE LOCKERS COME APART FROM THE BOXES (owner, 2026-09-27): the
+      // letter names each with the engine's id of the item, the key its
+      // stashes are filed under and where it stands, and they go to the
+      // lockers table, never to the boxes.
+      const at = stampNow();
+      const anchors = (Array.isArray(Json?.anchors) ? Json.anchors : [])
+        .map((a) => ({ id: String(a?.id || ''), key: String(a?.key || ''), pos: String(a?.pos || '') }))
+        .filter((a) => Xchg.isBoxId(a.id));
+      for (const a of anchors) store.lockerSeen(a.id, { key: a.key, pos: a.pos, at });
       // `ServerId` is the authenticated caller: a box another server holds
       // open is answered as closed to this one (storage-store.js, boot).
-      const answer = store.boot(boxes, stampNow(), String(ServerId || ''));
+      const answer = { ...store.boot(boxes, at, String(ServerId || '')), lockers: anchors.length };
       try {
         const swept = xchg.sweep(store.knownIds());
         if (swept.length) console.log(`[storage] boot: swept ${swept.length} stale file(s) from the exchange directory`);
       } catch (e) {
         console.warn(`[storage] boot: sweep failed (${e.code || e.message})`);
       }
-      console.log(`[storage] boot: ${boxes.length} box(es), ${answer.classes.length} class(es) to check`);
+      console.log(`[storage] boot: ${boxes.length} box(es), ${anchors.length} locker(s), ${answer.classes.length} class(es) to check`);
       if (answer.back.length) {
         console.log(`[storage] boot: ${answer.back.length} archived box(es) are in the world again and were brought back closed: ${answer.back.join(', ')}`);
       }

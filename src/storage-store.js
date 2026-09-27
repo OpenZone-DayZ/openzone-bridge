@@ -104,6 +104,20 @@ const DDL = [
      place TEXT NOT NULL DEFAULT '',
      at    TEXT NOT NULL DEFAULT ''
    )`,
+  // THE LOCKERS OF PERSONAL STASHES (owner, 2026-09-27): not boxes, kept
+  // apart. Keyed by where the locker stands (the stashes' key), with the
+  // engine's id of the item as the mod names it in the boot letter and at
+  // its placement; a locker placed again on the same spot is a new item
+  // under the same key.
+  `CREATE TABLE IF NOT EXISTS storage_lockers (
+     key          TEXT PRIMARY KEY,
+     entity_id    TEXT NOT NULL DEFAULT '',
+     pos          TEXT NOT NULL DEFAULT '',
+     placed_at    TEXT NOT NULL DEFAULT '',
+     placed_by    TEXT NOT NULL DEFAULT '',
+     last_seen_at TEXT NOT NULL DEFAULT '',
+     removed_at   TEXT NOT NULL DEFAULT ''
+   )`,
   `CREATE INDEX IF NOT EXISTS storage_events_uid ON storage_events(uid, id)`,
 ];
 
@@ -170,6 +184,11 @@ export class StorageStore {
       labelSet: q(`INSERT INTO storage_labels(key, name, place, at) VALUES (?, ?, ?, ?)
                    ON CONFLICT(key) DO UPDATE SET name = excluded.name, place = excluded.place, at = excluded.at`),
       labelsAll: q('SELECT key, name, place FROM storage_labels'),
+      lockerGet: q('SELECT * FROM storage_lockers WHERE key = ?'),
+      lockerPut: q(`INSERT OR REPLACE INTO storage_lockers(key, entity_id, pos, placed_at, placed_by, last_seen_at, removed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)`),
+      lockerRemoved: q('UPDATE storage_lockers SET removed_at = ? WHERE entity_id = ?'),
+      lockersAll: q('SELECT * FROM storage_lockers ORDER BY key'),
       // The last name each player was seen with, off the events. Not
       // "proxy": the mod signs the fill of a box with that word instead of
       // the opener's name (OZS_Proxy, RequestOpenAs), and it would
@@ -725,8 +744,15 @@ export class StorageStore {
           Number.isInteger(e.row) ? e.row : -1, Number.isInteger(e.col) ? e.col : -1, String(e.slot || ''),
           String(e.note || ''), String(serverId || ''), String(e.admin || ''));
         stored++;
-        if (kind === 'placed' && box) this.seen(box, { class: String(e.type || ''), pos: String(e.note || ''), at, by: uid });
-        if (kind === 'removed' && box) this.removed(box, at);
+        // A LOCKER IS NOT A BOX: its placement and removal go to the
+        // lockers. The audit's slot field carries its key, the note its spot.
+        if (String(e.type || '') === 'OZ_StashAnchor') {
+          if (kind === 'placed' && box) this.lockerSeen(box, { key: String(e.slot || ''), pos: String(e.note || ''), at, by: uid });
+          if (kind === 'removed' && box) this.lockerRemoved(box, at);
+        } else {
+          if (kind === 'placed' && box) this.seen(box, { class: String(e.type || ''), pos: String(e.note || ''), at, by: uid });
+          if (kind === 'removed' && box) this.removed(box, at);
+        }
       }
     });
     return stored;
@@ -800,6 +826,45 @@ export class StorageStore {
     const m = new Map();
     for (const r of this.q.labelsAll.all()) m.set(r.key, { name: r.name, place: r.place });
     return m;
+  }
+
+  // ---- lockers ----
+
+  // A locker's key from where it stands, as the mod makes it
+  // (OZS_Const.AnchorKeyAt): whole metres, never below zero, digits and
+  // one x. A fallback for a letter that carries the spot but not the key.
+  static anchorKeyAt(pos) {
+    const m = String(pos || '').trim().split(/\s+/).map(Number);
+    if (m.length !== 3 || m.some((v) => !Number.isFinite(v))) return '';
+    return `${Math.max(0, Math.round(m[0]))}x${Math.max(0, Math.round(m[2]))}`;
+  }
+
+  // A locker the mod named: in a boot letter, or at its placement. Seen
+  // again under the same engine id, it keeps its placement and moves its
+  // last sight; a different item on the same spot is a new placement
+  // under the same key, and either way it is in the world again.
+  lockerSeen(entityId, { key = '', pos = '', at = stampNow(), by = '' } = {}) {
+    const k = String(key || '') || StorageStore.anchorKeyAt(pos);
+    if (!k) return false;
+    const id = String(entityId || '');
+    const had = this.q.lockerGet.get(k);
+    const fresh = !had || (id !== '' && had.entity_id !== id);
+    const placedAt = fresh ? at : had.placed_at;
+    const placedBy = fresh ? by : (had.placed_by || by);
+    this.q.lockerPut.run(k, id || (had ? had.entity_id : ''), pos || (had ? had.pos : ''), placedAt, placedBy, at, '');
+    return true;
+  }
+
+  lockerRemoved(entityId, at = stampNow()) {
+    return this.q.lockerRemoved.run(at, String(entityId || '')).changes > 0;
+  }
+
+  lockerOf(key) {
+    return this.q.lockerGet.get(String(key || '')) || null;
+  }
+
+  lockers() {
+    return this.q.lockersAll.all();
   }
 
   // Whose stash is whose, by name: the last name every player was seen

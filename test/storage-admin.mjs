@@ -570,6 +570,12 @@ ok('an unknown locker is refused', admin.locker({ anchor: '9x9' }), { ok: false,
 ok('a locker can be labelled by its key', admin.label({ id: 'locker:300x400', name: 'Shed', admin: 'owner' }).name, 'Shed');
 ok('the player page names the player', admin.player({ uid: '111' }).name, 'Seth');
 ok('an event the mod signed "proxy" is shown under the player\'s name', admin.player({ uid: '111' }).events.filter((e) => e.kind === 'open').map((e) => e.name), ['Seth', 'Seth']);
+s.lockerSeen('7-7-7-7', { key: '100x200', pos: '100 0 200', at: '2026-09-27 12:30:00', by: '111' });
+ok('a locker the boot letter named carries the engine\'s id, its placer by name and its spot', (() => { const l = admin.boxes().lockers.find((x) => x.anchor === '100x200'); return [l.id, l.pos, l.placed_by, l.placed_by_name, l.status, l.stashes.length, l.name]; })(), ['7-7-7-7', '100 0 200', '111', 'Seth', 'closed', 2, 'Hangar']);
+ok('a locker known only through its stashes has no id yet', admin.boxes().lockers.find((x) => x.anchor === '300x400').id, '');
+ok('a locker nobody has a stash at is listed all the same', (() => { s.lockerSeen('8-8-8-8', { key: '500x600', pos: '500 0 600', at: '2026-09-27 12:31:00' }); const l = admin.boxes().lockers.find((x) => x.anchor === '500x600'); return [l.id, l.stashes.length, l.name]; })(), ['8-8-8-8', 0, '']);
+ok('a stash page names its locker\'s id', admin.box({ id: 's_100x200_111' }).box.locker.id, '7-7-7-7');
+ok('a removed locker says so', (() => { s.lockerRemoved('8-8-8-8', '2026-09-27 12:32:00'); return admin.locker({ anchor: '500x600' }).locker.status; })(), 'removed');
 
 
 console.log(`\n${pass} passed, ${fail} failed`);

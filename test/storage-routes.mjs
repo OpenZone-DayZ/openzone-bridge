@@ -111,7 +111,7 @@ try {
   await ready();
 
   ok('boot of an unknown box answers none', await call('/v1/storage/boot', { boxes: [{ id: BOX, cls: 'OZ_StorageBox_Large', state: 'CLOSED', entities: 0, pos: '4650 339 10400' }] }),
-    { ok: true, boxes: [{ id: BOX, status: 'none', version: 0, roots: 0 }], classes: [], back: [] });
+    { ok: true, boxes: [{ id: BOX, status: 'none', version: 0, roots: 0 }], classes: [], back: [], lockers: 0 });
 
   // A close: the game writes the file, then tells the bridge.
   const name = `${BOX}-20260919-051530.bin`;
@@ -129,6 +129,8 @@ try {
   ok('and did not rewrite it', statSync(join(xdir, `${BOX}.bin`)).mtimeMs, before);
   ok('opened marks the box open', await call('/v1/storage/opened', { id: BOX, stamp: '2026-09-19 05:15:30' }), { ok: true });
   ok('boot now says open', (await call('/v1/storage/boot', { boxes: [{ id: BOX, class: '', state: 'OPEN', entities: 4, pos: '' }] })).boxes, [{ id: BOX, status: 'open', version: 1, roots: 3 }]);
+  ok('a boot letter\'s lockers are counted apart from its boxes', (await call('/v1/storage/boot', { boxes: [{ id: BOX, class: '', state: 'OPEN', entities: 4, pos: '' }], anchors: [{ id: '3-3-3-3', key: '4694x10188', pos: '4694.2 339 10188.4' }] })).lockers, 1);
+  ok('and the admin list names the locker by the engine\'s id', (await call('/v1/storage/admin', { op: 'boxes' })).lockers.map((l) => [l.anchor, l.id, l.pos]), [['4694x10188', '3-3-3-3', '4694.2 339 10188.4']]);
 
   // The engine could not read root 1: it parks it and asks again.
   const parked = await call('/v1/storage/park', { id: BOX, stamp: '2026-09-19 05:15:30', root: 1, type: 'PlateCarrierPouches', why: 'refused' });

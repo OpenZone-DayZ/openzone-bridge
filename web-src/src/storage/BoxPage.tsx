@@ -368,7 +368,7 @@ function WhoseStash({ box }: { box: Box }) {
           {others.map((x) => <option key={x.box_id} value={x.box_id}>{who(x.owner, x.owner_name)} · {x.roots}</option>)}
         </select>
       </Field>
-      <span className="muted small"><LockerLink anchor={box.anchor || ''} /> · {s('stashes_n', { n: others.length + 1 })}</span>
+      <span className="muted small"><LockerLink anchor={box.anchor || ''} id={box.locker ? box.locker.id : ''} /> · {s('stashes_n', { n: others.length + 1 })}</span>
     </div>
   );
 }

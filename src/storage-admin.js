@@ -126,14 +126,35 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
       return row;
     };
   };
-  // The lockers: one entry per anchor with every player's stash there.
-  const lockersOf = (rows) => {
+  // The lockers: one entry per anchor -- the item the bridge heard of in a
+  // boot letter or at its placement, under the engine's id of it (owner,
+  // 2026-09-27: "show the id of the anchor"), with every player's stash
+  // there. One known only through its stashes, before this build's first
+  // boot, has no id yet.
+  const lockersOf = (rows, server, names, labels) => {
     const byAnchor = new Map();
+    const seen = inWorld(server);
+    const blank = (anchor) => {
+      const label = labels.get(`locker:${anchor}`) || { name: '', place: '' };
+      return { anchor, id: '', pos: anchorPos(anchor), name: label.name, place: label.place, placed_at: '', placed_by: '', placed_by_name: '', status: 'closed', in_world: 'unknown', last_seen_at: '', stashes: [] };
+    };
+    for (const k of store.lockers()) {
+      const l = blank(k.key);
+      l.id = k.entity_id;
+      if (k.pos) l.pos = k.pos;
+      l.placed_at = k.placed_at;
+      l.placed_by = k.placed_by;
+      l.placed_by_name = k.placed_by ? (names.get(k.placed_by) || '') : '';
+      l.status = k.removed_at ? 'removed' : 'closed';
+      l.in_world = k.removed_at ? 'no' : seen({ box_id: '', last_seen_at: k.last_seen_at }).in_world;
+      l.last_seen_at = k.last_seen_at;
+      byAnchor.set(k.key, l);
+    }
     for (const r of rows) {
       if (r.kind !== 'stash' || !r.anchor || r.status === 'removed') continue;
       let l = byAnchor.get(r.anchor);
       if (!l) {
-        l = { anchor: r.anchor, pos: anchorPos(r.anchor), name: r.name, place: r.place, last_seen_at: '', stashes: [] };
+        l = blank(r.anchor);
         byAnchor.set(r.anchor, l);
       }
       l.stashes.push({ box_id: r.box_id, owner: r.owner, owner_name: r.owner_name, roots: r.roots, entities: r.entities, status: r.status, last_seen_at: r.last_seen_at, in_world: r.in_world });
@@ -213,8 +234,10 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
     // Every box, each with whether the chosen server had it in the world at
     // its last boot.
     boxes: ({ server } = {}) => {
-      const rows = store.boxes().map(decorate(server, store.names(), store.labels()));
-      return { ok: true, boxes: rows, lockers: lockersOf(rows) };
+      const names = store.names();
+      const labels = store.labels();
+      const rows = store.boxes().map(decorate(server, names, labels));
+      return { ok: true, boxes: rows, lockers: lockersOf(rows, server, names, labels) };
     },
 
     box: ({ id, server }) => {
@@ -229,7 +252,8 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
       // at the same anchor, by name, for the page's picker.
       seen.siblings = [];
       if (seen.kind === 'stash') {
-        seen.locker = { anchor: seen.anchor, pos: anchorPos(seen.anchor), name: seen.name, place: seen.place };
+        const known = store.lockerOf(seen.anchor);
+        seen.locker = { anchor: seen.anchor, id: known ? known.entity_id : '', pos: known && known.pos ? known.pos : anchorPos(seen.anchor), name: seen.name, place: seen.place };
         for (const other of store.boxes()) {
           if (other.box_id === box.box_id || other.status === 'removed') continue;
           const split = Xchg.splitId(other.box_id);
@@ -243,8 +267,10 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
     // One locker: its spot, its label and every player's stash there, by
     // name (owner, 2026-09-27: "make it possible to pick whose stash").
     locker: ({ anchor, server }) => {
-      const rows = store.boxes().map(decorate(server, store.names(), store.labels()));
-      const l = lockersOf(rows).find((x) => x.anchor === String(anchor || ''));
+      const names = store.names();
+      const labels = store.labels();
+      const rows = store.boxes().map(decorate(server, names, labels));
+      const l = lockersOf(rows, server, names, labels).find((x) => x.anchor === String(anchor || ''));
       if (!l) return bad('unknown locker');
       return { ok: true, locker: l };
     },

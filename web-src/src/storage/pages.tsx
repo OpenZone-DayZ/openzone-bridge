@@ -160,7 +160,8 @@ export function LockerPage({ anchor }: { anchor: string }) {
   const { data, why, reload } = useAnswer<{ locker: Locker }>('storage', 'locker', { anchor }, [anchor]);
   const cols: Col<Sibling>[] = [
     { key: 'who', label: s('owner'), render: (x) => <a href={href('storage', 'box', x.box_id)} title={x.owner}>{named(x.owner, x.owner_name)}</a>, sort: (x) => x.owner_name || x.owner },
-    { key: 'status', label: s('status'), render: (x) => <><StatusBadge status={x.status} />{x.in_world === 'no' && x.status !== 'removed' && <> <Badge tone="bad">{s('st_absent')}</Badge></>}</>, sort: (x) => x.status },
+    // A stash is a record, not a thing in the world: no presence badge.
+    { key: 'status', label: s('status'), render: (x) => <StatusBadge status={x.status} />, sort: (x) => x.status },
     { key: 'items', label: s('items'), num: true, render: (x) => x.entities ?? 0, sort: (x) => x.entities ?? 0 },
     { key: 'roots', label: s('roots'), num: true, render: (x) => x.roots ?? 0, sort: (x) => x.roots ?? 0 },
     { key: 'last_seen', label: s('last_seen'), mono: true, render: (x) => x.last_seen_at || '', sort: (x) => x.last_seen_at || '' },
@@ -168,15 +169,17 @@ export function LockerPage({ anchor }: { anchor: string }) {
   ];
   return (
     <>
-      <h1>{s('locker')} <span className="mono">{anchor}</span>{data && data.locker.name ? <span className="muted"> · {data.locker.name}</span> : null}</h1>
+      <h1>{s('locker')} <span className="mono">{anchor}</span>{data && data.locker.name ? <span className="muted"> · {data.locker.name}</span> : null}{data && data.locker.status === 'removed' ? <> <StatusBadge status="removed" /></> : null}{data && data.locker.in_world === 'no' && data.locker.status !== 'removed' ? <> <Badge tone="bad">{s('st_absent')}</Badge></> : null}</h1>
       {why && <Notice tone="bad">{why}</Notice>}
       {!data && !why && <Loading />}
       {data && (
         <>
           <Panel>
             <div className="facts">
+              <span className="k">{s('id')}</span><span className="mono">{data.locker.id || '—'}</span>
               <span className="k">{s('cls')}</span><span>{s('size_stash')}</span>
               <span className="k">{s('pos')}</span><span className="mono">{data.locker.pos || '—'}</span>
+              <span className="k">{s('placed_by')}</span><span>{data.locker.placed_by ? <PlayerLink uid={data.locker.placed_by} name={data.locker.placed_by_name} /> : '—'} <span className="muted mono">{data.locker.placed_at}</span></span>
               {data.locker.place ? <><span className="k">{s('place')}</span><span>{data.locker.place}</span></> : null}
               <span className="k">{s('f_kind_stash')}</span><span>{data.locker.stashes.length}</span>
               <span className="k">{s('last_seen')}</span><span className="mono">{data.locker.last_seen_at || '—'}</span>

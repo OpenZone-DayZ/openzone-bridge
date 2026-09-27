@@ -32,7 +32,7 @@ export type Box = {
   // A stash only: the other stashes of the same locker, for the picker,
   // and the locker itself.
   siblings?: Sibling[];
-  locker?: { anchor: string; pos: string; name: string; place: string };
+  locker?: { anchor: string; id?: string; pos: string; name: string; place: string };
   // The cargo in cells, counted by the bridge out of the server's class
   // sizes (the box page only): used, the box's own, and how many items the
   // dump could not size (counted as one cell each).
@@ -47,7 +47,22 @@ export type Sibling = { box_id: string; owner: string; owner_name: string; roots
 
 // One locker: its spot in whole metres, the admin's label, every player's
 // stash there.
-export type Locker = { anchor: string; pos: string; name: string; place: string; last_seen_at: string; stashes: Sibling[] };
+export type Locker = {
+  anchor: string;
+  // The engine's id of the locker item, empty until the bridge has heard it
+  // in a boot letter or at the locker's placement.
+  id: string;
+  pos: string;
+  name: string;
+  place: string;
+  placed_at: string;
+  placed_by: string;
+  placed_by_name: string;
+  status: string;
+  in_world: string;
+  last_seen_at: string;
+  stashes: Sibling[];
+};
 
 // The name beside the number: "Seth (7656...)" when an event ever named
 // them, the number alone otherwise.
