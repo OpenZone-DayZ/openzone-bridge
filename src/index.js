@@ -14,7 +14,7 @@
 
 import { config as loadEnv } from 'dotenv';
 import { HOME } from './home.js';
-import { byteClip, stamp } from './clip.js';
+import { byteClip, stamp, GAME_STR_MAX } from './clip.js';
 import { Store, snowflake } from './store.js';
 import { StorageStore } from './storage-store.js';
 import { Xchg } from './storage-xchg.js';
@@ -32,7 +32,7 @@ import { coreAdmin } from './core-admin.js';
 import { CLASSES_FILE, classSizes, storeClassDump } from './core-classes.js';
 import { statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { openPage, olderFromStore, toLine, fillFromTail, untilStamp } from './history.js';
+import { openPage, olderFromStore, toLine, fillFromTail, untilStamp, isAnon } from './history.js';
 import { fillMirror } from './mirror.js';
 import { DiscordSide } from './discord.js';
 import { HttpSide } from './http.js';
@@ -406,16 +406,24 @@ function discordIdsOf(members) {
   return members.map((uid) => store.linkOf(uid)?.discordId).filter(Boolean);
 }
 
-// WHAT TO CALL SOMEBODY THE GUILD CANNOT NAME (TZ-2 R2.6).
+// WHAT TO CALL SOMEBODY THE GAME CANNOT NAME (review 2026-09-28).
 //
-// Without a bot every player is unlinked, and there are no personas at all:
-// the only name anybody has is the one the game gave us, and failing that the
-// Steam64 itself. Never an empty string -- a nameless author or a nameless
-// member of a conversation is a hole on the screen with no way to fill it,
-// and the id at least identifies a person to whoever is reading.
+// GAME-FACING ONLY -- Members and every line's Who, the fields the PDA
+// itself renders. This used to fall all the way back to the raw Steam64
+// when neither the game name nor a linked Discord name was known, on the
+// theory that a nameless member is a hole on the screen with no way to fill
+// it. True, and the wrong fix: the id it filled that hole with is another
+// player's account, on screen for anybody who ever opened the list. Empty
+// instead -- the PDA renders its own localized placeholder for a name it
+// does not have, same as it already does for other unknowns.
+//
+// The only caller today (Members, ~line below) is exactly this game-facing
+// case. If a Discord-facing need ever shows up -- a thread title, a log
+// line -- it must NOT reuse this: build it from store.nameOf/linkOf directly
+// at that call site, with the Steam64 fallback this function no longer has.
 function nameFor(uid) {
   if (!uid) return '';
-  return store.nameOf(uid) || store.linkOf(uid)?.discordName || uid;
+  return store.nameOf(uid) || store.linkOf(uid)?.discordName || '';
 }
 
 // THE ROW FIRST, AND THE THREAD ONLY IF THE GUILD IS MEANT TO SEE IT.
@@ -492,6 +500,40 @@ function queuePush(uid, line, kind = 'chat') {
   // рознесе його всім своїм гравцям.
   pendingPushes.push({ seq: pushSeq, uid, kind, json: JSON.stringify(line) });
   if (pendingPushes.length > 200) pendingPushes.splice(0, pendingPushes.length - 200);
+}
+
+// THE PUSH ENVELOPE HAS THE SAME CEILING AS EVERY OTHER STRING VALUE (review
+// 2026-09-28, contract 4b; see clip.js).
+//
+// A chat push's Json is not one string, it is Text wrapped in Uid/Id/At/Who/
+// Mine/AUid/Kind/Title/Anon -- and Text alone is already byteClip'd to
+// GAME_STR_MAX bytes by the time a line reaches here (send/npc-say). Wrap a
+// 1000-byte Text in those other fields and the serialized object clears the
+// engine's 1023-byte ceiling on a string VALUE, the same effect the roster
+// split below measured for a different field: JsonFileLoader cuts it
+// mid-character, and the game drops the line rather than showing it short.
+//
+// So the WHOLE object is measured, not Text alone, and only Text gives up
+// the bytes: shrinking it is a truncated line with Clipped set, a broken
+// object is nothing at all. The stored line this came from is untouched --
+// open() and older() serve it whole, however long that is.
+function fitChatPush(line, max = GAME_STR_MAX) {
+  let json = JSON.stringify(line);
+  if (Buffer.byteLength(json, 'utf8') <= max) return json;
+
+  line.Clipped = true;
+  // JSON escaping can grow a string past its own byte length (every " or \
+  // costs one more byte once escaped), so each cut re-measures the WHOLE
+  // serialized object instead of trusting arithmetic on Text alone. Text
+  // only ever gets shorter here, so this converges.
+  json = JSON.stringify(line);
+  while (Buffer.byteLength(json, 'utf8') > max && line.Text) {
+    const over = Buffer.byteLength(json, 'utf8') - max;
+    const bytes = Buffer.byteLength(line.Text, 'utf8');
+    line.Text = byteClip(line.Text, Math.max(0, bytes - over));
+    json = JSON.stringify(line);
+  }
+  return json;
 }
 
 // How long a shared map mark lives in a conversation before the sweep
@@ -811,7 +853,16 @@ const routes = {
     // groups do. Zero or absent means no ceiling.
     const ceiling = Number(max) || 0;
     if (ceiling > 0) {
-      const mine = store.convosAll().filter((c) => c.kind === 'group' && c.key.startsWith(`g:${uid}:`)).length;
+      // LIVE, AND CURRENTLY FOUNDED BY THIS UID (review 2026-09-28). The
+      // key's prefix used to be the whole test, which over-counted two ways:
+      // group_del never removes the row, only archives it (members: [],
+      // archived: true, a few lines down), and a founder's group PASSES to
+      // another member on permadeath (wipePlayer, below) while the key --
+      // minted once -- keeps the old founder's prefix forever. create, then
+      // delete, two groups (the usual ceiling) left `groups_full` for good.
+      // ownerOf reads the CURRENT founder off the record, falling back to
+      // the prefix only for a row written before that field existed.
+      const mine = store.convosAll().filter((c) => c.kind === 'group' && !c.archived && ownerOf(c, c.key) === uid).length;
       if (mine >= ceiling) return { Error: 'groups_full' };
     }
 
@@ -992,6 +1043,13 @@ const routes = {
       Who: store.nameOf(uid) || '',
       Text: `Запрошення до групи «${c.title}»`,
       Mine: false,
+      // ADDITIVE (review 2026-09-28, contract 4c): Text alone is what every
+      // client up to now has shown, and stays exactly as it was. Kind and
+      // Title let a newer PDA render the toast as an invite in its own right
+      // -- the same way Kind already tells an ordinary chat push which
+      // conversation kind a line belongs to (below, in the poll drain).
+      Kind: 'invite',
+      Title: c.title,
     });
     return { ok: true };
   },
@@ -1088,12 +1146,13 @@ const routes = {
     //
     // Now the record is ours from the moment it exists, and Discord is one
     // more place it may also appear.
-    const who = (anon && c.kind === 'zone') ? 'Невідомий сталкер' : name;
+    const anonLine = !!(anon && c.kind === 'zone');
+    const who = anonLine ? 'Невідомий сталкер' : name;
 
     // Anonymity means the line is claimed by nobody: uid stays null, and even
     // the sender's own device shows it as not-theirs. Deniability is the
     // point. The real sender is in the game server's log, nowhere else.
-    const author = (anon && c.kind === 'zone') ? null : uid;
+    const author = anonLine ? null : uid;
 
     // Whether this line will also exist in Discord decides whether the store
     // is allowed to drop it later. Read BEFORE the post, because the answer
@@ -1109,6 +1168,12 @@ const routes = {
       text: byteClip(text),
       fromDiscord: false,
       inDiscord: alsoInDiscord,
+      // Contract 4a (review 2026-09-28): a field of its own, so a client can
+      // tell an anonymous line from an ordinary one without pattern-matching
+      // Who against the placeholder name. isAnon() (history.js) still treats
+      // the placeholder as anonymous too, for every line stored before this
+      // field existed.
+      anon: anonLine,
     });
     if (stored) http?.wake();
 
@@ -1668,7 +1733,7 @@ function drain({ ServerId, Cursor, Uids, Fresh, Mirrors, AdminIds }) {
       for (const uid of to) {
         items.push({
           Kind: 'chat',
-          Json: JSON.stringify({
+          Json: fitChatPush({
             Uid: uid,
             Id: m.key,
             At: m.at,
@@ -1678,6 +1743,8 @@ function drain({ ServerId, Cursor, Uids, Fresh, Mirrors, AdminIds }) {
             AUid: m.uid || '',
             Kind: c ? c.kind : '',
             Title: c ? c.title : '',
+            // Contract 4a (review 2026-09-28): additive, same rule as open/older.
+            Anon: isAnon(m),
           }),
         });
       }
@@ -1803,10 +1870,48 @@ async function wipePlayer(uid, serverId = '') {
   // somebody who stopped playing.
   const chatMirrored = serverId ? mirrored(serverId, 'chat') : anyMirrored('chat');
 
+  // EVERY INVITE ADDRESSED TO HIM GOES TOO (review 2026-09-28).
+  //
+  // Invites are keyed by Steam64, same as everything else in chat, and the
+  // account survives a permadeath even though the character does not. Left
+  // standing, an invite filed for the dead man was still sitting there for
+  // his next character to accept -- a group he was never invited to, from
+  // an invite nobody who is still alive remembers sending.
+  store.dropInvitesTo(uid);
+
   // З приватних тредiв -- геть, але самi треди лишаються жити.
   for (const c of store.convosAll()) {
     const key = c.key;
     if (!c.members || !c.members.includes(uid)) continue;
+
+    // THE PAGER DIES WITH THE CHARACTER (review 2026-09-28).
+    //
+    // An npc thread has exactly one member -- the player -- so unlike a
+    // group or a direct talk there is no second party whose copy has to
+    // survive him. Its key is `npc:<id>:<uid>`, computed fresh from the npc
+    // id and the Steam64 alone, and a permadeath changes neither: left
+    // standing, the row was still there under that same key for the next
+    // character to read AND to have his own /v1/npc/say lines appended onto
+    // a dead man's quest dialogue. Dropping the whole conversation (its
+    // messages go with it, dropConvo) means the key resolves to nothing, so
+    // the next say() for this npc and uid mints a fresh one -- exactly like
+    // a pager contact nobody has met yet. The thread is handled the same way
+    // a direct conversation's is a few lines down: locked and archived in
+    // the guild when chat is mirrored, because this too is a private thread
+    // of a dead character and there is nobody left in it to read it back.
+    if (c.kind === 'npc') {
+      if (chatMirrored && c.threadId) {
+        try {
+          await discord.archiveThread(c.threadId, 'OpenZone: permadeath');
+        } catch {
+          // The thread may already be gone; the store drop below is what matters.
+        }
+      }
+      store.dropConvo(key);
+      console.log(`[wipe] npc thread ${key} was dropped`);
+      continue;
+    }
+
     if (c.kind !== 'group' && c.kind !== 'direct') continue;
 
     if (discordId && c.threadId && discord.configured) {

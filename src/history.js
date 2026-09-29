@@ -74,6 +74,14 @@ export function fillFromTail(lines, tail) {
   return lines;
 }
 
+// A zone line sent anonymously (review 2026-09-28). The field is what a line
+// stored from now on carries; the Who check is what makes every line already
+// in the store -- written before the field existed, back when the placeholder
+// name was the only trace of anonymity -- agree with it.
+export function isAnon(m) {
+  return !!m.anon || m.who === 'Невідомий сталкер';
+}
+
 export function toLine(m, uid) {
-  return { At: m.at, Who: m.who, Text: m.text, Mine: !!m.uid && m.uid === uid, AUid: m.uid || '' };
+  return { At: m.at, Who: m.who, Text: m.text, Mine: !!m.uid && m.uid === uid, AUid: m.uid || '', Anon: isAnon(m) };
 }

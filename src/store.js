@@ -286,6 +286,7 @@ export class Store {
       invCount: q("SELECT COUNT(*) AS n FROM invites WHERE key = ? AND (expires_at = '' OR expires_at > ?)"),
       invSweep: q("DELETE FROM invites WHERE expires_at <> '' AND expires_at <= ?"),
       invDelKey: q('DELETE FROM invites WHERE key = ?'),
+      invDelUid: q('DELETE FROM invites WHERE uid = ?'),
 
       newsAll: q('SELECT json FROM news ORDER BY ts'),
       newsSet: q('INSERT INTO news(id, ts, json) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET ts = excluded.ts, json = excluded.json'),
@@ -658,6 +659,16 @@ export class Store {
 
   dropInvitesOf(key) {
     this.q.invDelKey.run(key);
+  }
+
+  // Every invite addressed TO this uid, across every conversation. A
+  // permadeath calls this (index.js wipePlayer): invites are keyed by
+  // Steam64 like the rest of chat, and without dropping them here the next
+  // character on the same account inherits every group invitation that was
+  // ever sent to the dead one -- the account persists even though the
+  // character does not.
+  dropInvitesTo(uid) {
+    this.q.invDelUid.run(uid);
   }
 
   // ---- news ----
