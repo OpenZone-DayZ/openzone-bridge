@@ -95,6 +95,7 @@ export const en = {
   size_small: 'small, 10×25',
   size_medium: 'medium, 10×50',
   size_large: 'large, 10×100',
+  size_fridge: 'large (fridge), 10×100',
   size_stash: 'personal stash',
   cells: 'Cells',
   cells_unknown: 'unsized',

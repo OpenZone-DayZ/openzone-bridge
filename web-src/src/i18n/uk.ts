@@ -97,6 +97,7 @@ export const uk: Record<keyof typeof en, string> = {
   size_small: 'малий, 10×25',
   size_medium: 'середній, 10×50',
   size_large: 'великий, 10×100',
+  size_fridge: 'великий (холодильник), 10×100',
   size_stash: 'особистий схрон',
   cells: 'Клітинок',
   cells_unknown: 'без розміру',

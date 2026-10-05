@@ -144,10 +144,12 @@ export type Health = {
 export type LiveResult = { at: string; kind: string; note: string };
 
 export const COLS = 10;
-export const SIZES: Record<string, { rows: number; key: 'size_small' | 'size_medium' | 'size_large' | 'size_stash' }> = {
+export const SIZES: Record<string, { rows: number; key: 'size_small' | 'size_medium' | 'size_large' | 'size_fridge' | 'size_stash' }> = {
   OZ_StorageBox_Small: { rows: 25, key: 'size_small' },
   OZ_StorageBox_Medium: { rows: 50, key: 'size_medium' },
   OZ_StorageBox_Large: { rows: 100, key: 'size_large' },
+  // The large box in its second shell (openzone-storage, 2026-10-05).
+  OZ_StorageBox_Fridge: { rows: 100, key: 'size_fridge' },
   OZ_PersonalStash: { rows: 50, key: 'size_stash' },
 };
 

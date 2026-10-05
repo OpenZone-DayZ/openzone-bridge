@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { Store } from '../src/store.js';
 import { StorageStore } from '../src/storage-store.js';
 import { Xchg } from '../src/storage-xchg.js';
-import { storageAdmin, diffRoots } from '../src/storage-admin.js';
+import { cellsOf, storageAdmin, diffRoots } from '../src/storage-admin.js';
 import { buildChunk, parseChunk } from '../src/storage-wire.js';
 
 const path = join(tmpdir(), `oz-storage-admin-${process.pid}.sqlite`);
@@ -286,6 +286,7 @@ console.log('cells and give against the server\'s sizes');
   ok('and the count grew by its size', sized.box({ id: BOX }).box.cells.used, before.used + 1);
   ok('a give with no room is refused before any version', [sized.give({ id: BOX, type: 'Tent', qty: 0, admin: 'tester' }).why.startsWith('no room:'), sized.box({ id: BOX }).box.cells.used], [true, before.used + 1]);
   ok('an unsized class is given (the game decides at the open)', sized.give({ id: BOX, type: 'Mystery', qty: 0, admin: 'tester' }).ok, true);
+  ok('a box class the dump does not size falls back to the boxes of the series, the fridge being a large box', [cellsOf('OZ_StorageBox_Fridge', [], null).max, cellsOf('OZ_StorageBox_Large', [], null).max, cellsOf('SeaChest', [], null).max], [1000, 1000, 0]);
   ok('without sizes nothing is refused', storageAdmin({ store: s, xchg: x, push: () => {}, health: () => ({ servers: [] }) }).give({ id: BOX, type: 'Tent', qty: 0, admin: 'tester' }).ok, true);
 }
 
