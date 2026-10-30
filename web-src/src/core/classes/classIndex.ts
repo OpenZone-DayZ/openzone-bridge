@@ -3,7 +3,7 @@
 // the core writes at every server start (the mods' stringtables read on
 // the server itself), turned into rows by the bridge and kept there per
 // server. The
-// row shape comes from ZP_Research's web editor, grown by a sixth element
+// row shape comes from an earlier research editor, grown by a sixth element
 // (the English name beside the original column's); `mods` holds one
 // entry, the server, because the game does not say which addon declared
 // a class.
@@ -15,7 +15,7 @@
 export type Root = 0 | 1 | 2 | 3 | 4;
 
 // The five roots OZL_Match.ClassExists asks the game about (the order here
-// is the index's own, kept from ZP; `cfgWeapons` is the real spelling of
+// is the index's own, kept from that editor; `cfgWeapons` is the real spelling of
 // the root in the game's configs).
 export const ROOT_NAMES: readonly [string, string, string, string, string] = [
   'CfgVehicles',
@@ -61,7 +61,7 @@ export type Lang = 'en' | 'uk';
 
 // The one way a ClassIndex is built out of JSON: the importer's result,
 // the bridge's stored copy, a file. Accepts v2 rows (five elements, from
-// the ZP editor) and v3 rows; refuses garbage loudly, because a silently
+// the earlier editor) and v3 rows; refuses garbage loudly, because a silently
 // broken index would show "class not found" all over the editor.
 export function parseClassIndexJson(data: unknown): ClassIndex {
   if (typeof data !== 'object' || data === null) throw new Error('ClassIndex: not an object');
