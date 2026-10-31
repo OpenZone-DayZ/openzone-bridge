@@ -36,6 +36,13 @@ export function diffRoots(aRoots, bRoots) {
 // reported as unknown; a box class it does not size falls back to the
 // series' boxes (the fridge is the large box in another shell).
 const FALLBACK_CARGO = { oz_storagebox_small: 250, oz_storagebox_medium: 500, oz_storagebox_large: 1000, oz_storagebox_fridge: 1000, oz_personalstash: 500 };
+
+// The attachment slots of the series' containers (openzone-storage's
+// config.cpp): since 2026-10-05 a box keeps its weapon rack and nothing
+// else -- two, four, six weapon slots by size, the fridge being a large box
+// -- and the personal stash has the eleven slots of a character and four
+// weapon slots. A class not named here has none the bridge counts on.
+export const SLOTS = { oz_storagebox_small: 2, oz_storagebox_medium: 4, oz_storagebox_large: 6, oz_storagebox_fridge: 6, oz_personalstash: 15 };
 export function cellsOf(boxClass, items, sizes) {
   const cls = String(boxClass || '').toLowerCase();
   const own = sizes ? sizes.get(cls) : null;
@@ -54,21 +61,51 @@ export function cellsOf(boxClass, items, sizes) {
   return { used, max, unknown };
 }
 
-// The cells each ROOT of a box costs, by root index. cellsOf adds these up;
-// a restore that cannot move everything needs them one by one. A root that
-// is not in the cargo (attached in a slot) costs the cargo nothing.
-export function rootCells(items, sizes) {
+// What each ROOT of a box would cost another, by root index: its cells,
+// and the slot it hangs on when it hangs on one (null for the cargo).
+// Without the server's sizes a root still cannot cost less than one cell.
+export function rootCosts(items, sizes) {
   const per = new Map();
   for (const it of items) {
     if (it.parent !== -1) continue;
-    if (it.loc_type !== 3) {
-      per.set(it.root_idx, 0);
-      continue;
-    }
     const sz = sizes ? sizes.get(String(it.type).toLowerCase()) : null;
-    per.set(it.root_idx, sz && sz.w && sz.h ? sz.w * sz.h : 1);
+    per.set(it.root_idx, { cells: sz && sz.w && sz.h ? sz.w * sz.h : 1, slot: it.loc_type === 3 ? null : it.slot });
   }
   return per;
+}
+
+// Which roots of a source fit a target, in the order of their index: the
+// first-fit a restore takes. A root out of the cargo costs its cells. A
+// root hung on a slot is laid back on the same slot id when the target has
+// it free (OZS_Records.Create) and in the grid otherwise, so it costs
+// nothing while the target has a slot left that its own roots and the roots
+// taken before do not hold -- counted against the target's weapon rack
+// (SLOTS) -- and its cells after that. The game decides by the slot's id,
+// which the bridge cannot map to a name: a root from a slot the target class
+// lacks (a large box's fifth into a small one) is still counted into a free
+// slot; at worst the game lays it in the grid and parks what then does not
+// fit (`no_room`), never losing it. Answers the indices taken, the cells
+// and slots that were free, and the cells of the smallest root.
+export function fitRoots(targetClass, targetItems, sourceCosts, sizes) {
+  const have = cellsOf(targetClass, targetItems, sizes);
+  const held = new Set(targetItems.filter((it) => it.parent === -1 && it.loc_type !== 3).map((it) => it.slot));
+  const slotsFree = Math.max(0, (SLOTS[String(targetClass || '').toLowerCase()] || 0) - held.size);
+  let cells = have.max - have.used;
+  let slots = slotsFree;
+  const take = [];
+  for (const [idx, cost] of [...sourceCosts].sort((a, b) => a[0] - b[0])) {
+    if (cost.slot !== null && slots > 0 && !held.has(cost.slot)) {
+      slots -= 1;
+      held.add(cost.slot);
+      take.push(idx);
+      continue;
+    }
+    if (cost.cells > cells) continue;
+    cells -= cost.cells;
+    take.push(idx);
+  }
+  const smallest = sourceCosts.size ? Math.min(...[...sourceCosts.values()].map((c) => c.cells)) : 0;
+  return { take, max: have.max, cellsFree: have.max - have.used, slotsFree, smallest };
 }
 
 export function storageAdmin({ store, xchg, push, health, sizes = null }) {
@@ -89,6 +126,14 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
   // last seen before the storage boot was not there: gone, or the world
   // reset. 'unknown' before any boot the bridge saw. The chosen server,
   // else the first that booted storage.
+  //
+  // A PERSONAL STASH STANDS IN THE WORLD AS ITS LOCKER (owner, 2026-10-31).
+  // Nothing of the stash itself is placed, and the boot letter names the
+  // lockers (`anchors`), not the stashes, so a stash's own last sight is
+  // only its last turn: judged by it, every stash not opened since a
+  // restart read "not in the world" and was offered the archive. Its
+  // presence is its locker's -- heard at the last boot and not removed
+  // since. A locker the bridge has never heard of leaves it 'unknown'.
   function inWorld(server) {
     const servers = health ? (health().servers || []) : [];
     const sid = String(server || '');
@@ -98,7 +143,21 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
     // key already carries the pair, so the boxes table needs no column for it
     // and an old row cannot disagree with its own name. A plain box gets
     // empty strings, which is what the listing shows as a blank cell.
-    return (b) => ({ ...b, ...Xchg.splitId(b.box_id), in_world: boot ? (b.last_seen_at >= boot ? 'yes' : 'no') : 'unknown', world_boot: boot });
+    return (b) => {
+      const split = Xchg.splitId(b.box_id);
+      let seenAt = b.last_seen_at;
+      let gone = false;
+      let judged = boot !== '';
+      if (split.kind === 'stash') {
+        const locker = store.lockerOf(split.anchor);
+        if (!locker) judged = false;
+        else {
+          seenAt = locker.last_seen_at;
+          gone = !!locker.removed_at;
+        }
+      }
+      return { ...b, ...split, in_world: judged ? (!gone && seenAt >= boot ? 'yes' : 'no') : 'unknown', world_boot: boot };
+    };
   }
 
   const bad = (why) => ({ ok: false, why });
@@ -195,16 +254,19 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
   const archived = (id) => store.boxOf(String(id || '')) || null;
 
   // The one rule that lets SQL decide a box's fate by itself: the server did
-  // not have it at its last boot. Anything else belongs to the game.
-  function absent(box, server) {
+  // not have it at its last boot. Anything else belongs to the game. `live`
+  // is the live command that would do it instead (close, remove). A stash
+  // goes by its locker: it closes with the live command like a box, but
+  // there is no stash to remove from the world -- it leaves with its locker.
+  function absent(box, server, live) {
     const seen = inWorld(server)(box);
     if (seen.in_world === 'no') return { boot: seen.world_boot, why: '' };
-    return {
-      boot: seen.world_boot,
-      why: seen.in_world === 'yes'
-        ? 'the box is in the world; {live} it with the live command instead'
-        : 'no server has booted storage yet, so the world cannot be asked; try once one has',
-    };
+    let why = 'no server has booted storage yet, so the world cannot be asked; try once one has';
+    if (seen.in_world === 'yes' && seen.kind !== 'stash') why = `the box is in the world; ${live} it with the live command instead`;
+    else if (seen.in_world === 'yes' && live === 'close') why = "the stash's locker is in the world; close the stash with the live command instead";
+    else if (seen.in_world === 'yes') why = "the stash's locker is in the world, and a stash leaves the world only with its locker";
+    else if (seen.kind === 'stash' && seen.world_boot) why = "the bridge has never heard of this stash's locker, so it cannot tell whether the stash is in the world";
+    return { boot: seen.world_boot, why };
   }
 
   // A root is named by its NUMBER, and the numbers shift whenever the box
@@ -423,26 +485,21 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
       // still cannot cost LESS than one cell, so the count is checked
       // against the box's own cargo all the same -- a floor, not a guess,
       // and better than pouring a thousand roots into a box for ten.
+      //
+      // A root hung on a slot is counted against the target's weapon rack
+      // (fitRoots): free while the target has a slot left, its cells after.
       let take = null;
       const map = sizesFor(server);
-      const have = cellsOf(target.class, store.itemsOf(target.box_id), map);
-      const per = map
-        ? rootCells(store.itemsOf(from.box_id), map)
-        : new Map(store.itemsOf(from.box_id).filter((it) => it.parent === -1).map((it) => [it.root_idx, 1]));
+      const per = rootCosts(store.itemsOf(from.box_id), map);
+      const fit = fitRoots(target.class, store.itemsOf(target.box_id), per, map);
       // An empty source has nothing to fit anywhere: leave the refusal to
       // the store, which says so plainly, rather than reporting no room for
       // a smallest root that does not exist.
-      if (have.max > 0 && per.size > 0) {
-        let free = have.max - have.used;
-        take = [];
-        for (const [idx, cost] of [...per].sort((a, b) => a[0] - b[0])) {
-          if (cost > free) continue;
-          free -= cost;
-          take.push(idx);
-        }
+      if (fit.max > 0 && per.size > 0) {
+        take = fit.take;
         if (take.length === 0) {
-          const smallest = Math.min(...[...per.values()]);
-          return bad(`no room: ${have.max - have.used} cell(s) free in the target, its smallest root needs ${smallest}`);
+          const slots = !fit.slotsFree && [...per.values()].some((c) => c.slot !== null) ? ', no slot left' : '';
+          return bad(`no room: ${fit.cellsFree} cell(s) free in the target${slots}, its smallest root needs ${fit.smallest}`);
         }
       }
       const r = store.restoreBox(String(id || ''), String(to || ''), { admin, take });
@@ -467,8 +524,8 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
       const box = known(id);
       if (!box) return bad('unknown box');
       if (box.status !== 'open') return bad('the box is not open');
-      const gone = absent(box, server);
-      if (gone.why) return bad(gone.why.replace('{live}', 'close'));
+      const gone = absent(box, server, 'close');
+      if (gone.why) return bad(gone.why);
       if (!store.markClosed(String(id || ''))) return bad('unknown box');
       dropCache(String(id));
       record('admin_mark_closed', String(id), admin, `stuck open, absent from the world since ${gone.boot}`);
@@ -489,8 +546,8 @@ export function storageAdmin({ store, xchg, push, health, sizes = null }) {
     archive: ({ id, admin, server }) => {
       const box = known(id);
       if (!box) return bad('unknown box');
-      const gone = absent(box, server);
-      if (gone.why) return bad(gone.why.replace('{live}', 'remove'));
+      const gone = absent(box, server, 'remove');
+      if (gone.why) return bad(gone.why);
       store.removed(String(id || ''));
       dropCache(String(id));
       record('admin_mark_removed', String(id), admin, `was ${box.status}, absent from the world since ${gone.boot}`);

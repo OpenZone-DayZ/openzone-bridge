@@ -65,6 +65,7 @@ export const en = {
   st_removed: 'removed',
   st_absent: 'not in the world',
   absent_text: 'The game had no such box when the server started at {since} (UTC): it is gone from the world, or the world was reset. Live commands cannot reach it; its history stays here.',
+  absent_stash_text: 'The game had no locker for this stash when the server started at {since} (UTC): the locker is gone from the world, or the world was reset. Live commands cannot reach the stash; its history stays here.',
   f_status: 'What SQL holds',
   f_kept: 'Not deleted',
   f_any_status: 'Any status',

@@ -110,7 +110,7 @@ export function BoxPage({ id }: { id: string }) {
         // SQL stops believing it open, which only a box absent from the
         // world may be told.
         <Panel tight title={s('live_title')}>
-          <Notice tone="alert">{s('absent_text', { since: box.world_boot || '' })}</Notice>
+          <Notice tone="alert">{s(box.kind === 'stash' ? 'absent_stash_text' : 'absent_text', { since: box.world_boot || '' })}</Notice>
           {box.status === 'open' ? (
             <div className="row">
               <span className="muted small">{s('stuck_open')}</span>
@@ -540,7 +540,7 @@ function LivePanel({ box, onChanged }: { box: Box; onChanged: () => Promise<void
         <div className="row">
           <button type="button" disabled={busy} onClick={() => run('report')}>{s('live_report')}</button>
           {box.status === 'open' && <Confirm warn disabled={busy} label={s('live_close')} question={s('c_close', { id })} onConfirm={() => run('close')} />}
-          {box.status === 'closed' && <Confirm danger disabled={busy} label={s('live_remove')} question={s('c_remove', { id })} onConfirm={() => run('remove')} />}
+          {box.status === 'closed' && box.kind !== 'stash' && <Confirm danger disabled={busy} label={s('live_remove')} question={s('c_remove', { id })} onConfirm={() => run('remove')} />}
           <span className="muted small">{s('live_help')}</span>
         </div>
         {cols.map((l) => <div key={l.id} className={`answer ${l.tone === 'ok' ? '' : l.tone}`}>{l.text}</div>)}

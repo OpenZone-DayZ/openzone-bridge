@@ -582,6 +582,64 @@ ok('a stash page names its locker\'s id', admin.box({ id: 's_100x200_111' }).box
 ok('a removed locker says so', (() => { s.lockerRemoved('8-8-8-8', '2026-09-27 12:32:00'); return admin.locker({ anchor: '500x600' }).locker.status; })(), 'removed');
 
 
+// A personal stash has nothing placed of its own: it stands in the world
+// as its locker, which the boot letter names (owner, 2026-10-31).
+console.log('a stash is in the world as its locker');
+{
+  const boot = '2026-10-01T00:00:00Z';
+  const world = storageAdmin({ store: s, xchg: x, push: () => {}, health: () => ({ servers: [{ id: 'stand', at: '', since: '', kinds: { storage: boot } }] }) });
+  const HERE = 's_910x920_111';
+  const AWAY = 's_930x940_222';
+  const NONE = 's_950x960_333';
+  // Not one of them turned since the restart: their own last sight is old.
+  for (const id of [HERE, AWAY, NONE]) {
+    s.ingestClose({ boxId: id, header: { stamp: '2026-09-28 10:00:00', boxClass: 'OZ_PersonalStash', saveVer: 142 }, chunks: [buildChunk([paper(0, 0)], Buffer.from('cc', 'hex'))], at: '2026-09-28 10:00:01' });
+    s.seen(id, { at: '2026-09-28 10:00:01' });
+  }
+  s.lockerSeen('9-1-9-1', { key: '910x920', pos: '910 0 920', at: '2026-10-01 00:00:05' });
+  s.lockerSeen('9-3-9-3', { key: '930x940', pos: '930 0 940', at: '2026-09-28 09:00:00' });
+  ok('a stash whose locker the last boot named is in the world', world.box({ id: HERE, server: 'stand' }).box.in_world, 'yes');
+  ok('one whose locker the last boot did not name is not', world.box({ id: AWAY, server: 'stand' }).box.in_world, 'no');
+  ok('one whose locker the bridge never heard of is unknown', world.box({ id: NONE, server: 'stand' }).box.in_world, 'unknown');
+  ok('the list and the locker rows say the same', [world.boxes({ server: 'stand' }).boxes.find((b) => b.box_id === HERE).in_world, world.locker({ anchor: '910x920', server: 'stand' }).locker.stashes.map((x2) => x2.in_world)], ['yes', ['yes']]);
+  ok('a stash at a locker in the world is not archived', world.archive({ id: HERE, admin: 't', server: 'stand' }), { ok: false, why: "the stash's locker is in the world, and a stash leaves the world only with its locker" });
+  s.markOpen(HERE, '2026-10-01 00:10:00');
+  ok('nor told to stop believing it open', world.unstick({ id: HERE, admin: 't', server: 'stand' }), { ok: false, why: "the stash's locker is in the world; close the stash with the live command instead" });
+  s.markClosed(HERE);
+  ok('a locker never heard of decides nothing', world.archive({ id: NONE, admin: 't', server: 'stand' }).why, "the bridge has never heard of this stash's locker, so it cannot tell whether the stash is in the world");
+  ok('a stash whose locker is gone is archived like a box', world.archive({ id: AWAY, admin: 't', server: 'stand' }), { ok: true, status: 'removed' });
+  s.lockerRemoved('9-1-9-1', '2026-10-01 01:00:00');
+  ok('and a removed locker takes its stashes out of the world', world.box({ id: HERE, server: 'stand' }).box.in_world, 'no');
+}
+
+// A root hung on a slot is laid back on its slot id when the target has it
+// free and in the grid otherwise: it is counted against the target's weapon
+// rack, not as nothing (owner, 2026-10-31).
+console.log('a restore counts slotted roots against the weapon rack');
+{
+  const sizes = () => new Map([
+    ['oz_storagebox_small', { w: 10, h: 5, cw: 10, ch: 1 }],   // 10 cells, two weapon slots
+    ['akm', { w: 6, h: 3, cw: 0, ch: 0 }],                     // 18 cells
+    ['paper', { w: 1, h: 1, cw: 0, ch: 0 }],
+  ]);
+  const boot = '2026-10-01T00:00:00Z';
+  const rack = storageAdmin({ store: s, xchg: x, push: () => {}, sizes, health: () => ({ servers: [{ id: 'stand', at: '', since: '', kinds: { storage: boot } }] }) });
+  const rifle = (slot) => buildChunk([{ parent: -1, type: 'AKM', locType: 2, slot, row: -1, col: -1, flip: 0, health: 100, quantity: 0, liquid: 0, ammo: 0, hasBlob: 1 }], Buffer.from('cc', 'hex'));
+  const FROM = '-401-401-401-401';
+  const SMALL = '-402-402-402-402';
+  // A large box the world lost: rifles on slots 70, 71 and 72, a paper.
+  s.ingestClose({ boxId: FROM, header: { stamp: '2026-09-28 10:00:00', boxClass: 'OZ_StorageBox_Large', saveVer: 142 }, chunks: [rifle(70), rifle(71), rifle(72), buildChunk([paper(0, 0)], Buffer.from('cc', 'hex'))], at: '2026-09-28 10:00:01' });
+  // A small box in the world, a rifle of its own on slot 70.
+  s.ingestClose({ boxId: SMALL, header: { stamp: '2026-10-01 10:00:00', boxClass: 'OZ_StorageBox_Small', saveVer: 142 }, chunks: [rifle(70)], at: '2026-10-01 10:00:01' });
+  s.seen(SMALL, { at: '2026-10-01 10:00:01' });
+  // Slot 70 is taken there, so that rifle would go into the grid (18 > 10);
+  // 71 takes the one free slot; 72 finds the rack full; the paper fits.
+  const first = rack.restore({ id: FROM, to: SMALL, admin: 't', server: 'stand' });
+  ok('a slotted root takes a free slot of the target, then costs its cells', [first.ok, first.roots, first.left], [true, 2, 2]);
+  ok('the rifle on 71 and the paper went', s.itemsOf(SMALL).filter((it) => it.parent === -1).map((it) => [it.type, it.loc_type, it.slot]), [['AKM', 2, 70], ['AKM', 2, 71], ['Paper', 3, -1]]);
+  ok('with the rack full a rifle needs its cells', rack.restore({ id: FROM, to: SMALL, admin: 't', server: 'stand' }).why, 'no room: 9 cell(s) free in the target, no slot left, its smallest root needs 18');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();
 rmSync(dir, { recursive: true, force: true });
