@@ -5,12 +5,16 @@
 // mail. On the bridge's own database, beside the chat and storage tables.
 //
 // A version is a text kept whole, deduplicated by a CANONICAL hash: the
-// parsed value serialised with sorted keys. The game rewrites every file it
-// applies in its own formatting, so hashing the bytes would make each edit
-// two versions -- the admin's candidate and the game's rewrite of it. With
-// the canonical hash the rewrite promotes the candidate instead, and a file
-// that differs in substance (the game's Validate fixed a value) is what
-// becomes a new version of its own.
+// parsed value serialised with sorted keys, its fractions at the float32
+// precision the game keeps and its bools as the 1 and 0 the game writes.
+// The game rewrites every file it applies in its own formatting, so hashing
+// the bytes would make each edit two versions -- the admin's candidate and
+// the game's rewrite of it. With the canonical hash the rewrite promotes the
+// candidate instead, and a file that differs in substance (the game's
+// Validate fixed a value) is what becomes a new version of its own. (Hashes
+// stored before the float32 rule, 2026-10-31, differ from today's for a text
+// with a fraction or a bool: such a config gets one new version, once, at
+// the next boot.)
 
 import { createHash } from 'node:crypto';
 import { stampNow } from './storage-wire.js';
@@ -67,12 +71,20 @@ const DDL = [
 ];
 
 // The parsed value with its keys sorted at every depth: what two texts of
-// the same config have in common whatever their formatting.
+// the same config have in common whatever their formatting -- and whatever
+// the game's spelling of a value it reads the same. A float is 32 bits in
+// Enforce and the game writes it widened (0.7 comes back as
+// 0.699999988079071), so a fraction counts as the float32 it stands for; a
+// whole number stays exact (an int is 32 bits there too, and a float field
+// holding a whole number is exact in float32 below 2^24, beyond anything
+// the configs allow). A bool is written by the game as 1 or 0.
 export function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (value && typeof value === 'object') {
     return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}`;
   }
+  if (typeof value === 'boolean') return value ? '1' : '0';
+  if (typeof value === 'number' && Number.isFinite(value) && !Number.isInteger(value)) return JSON.stringify(Math.fround(value));
   return JSON.stringify(value);
 }
 

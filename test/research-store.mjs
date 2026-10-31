@@ -33,6 +33,12 @@ ok('key order and formatting do not matter', hashOfText('{"Version": 1, "Owners"
 ok('a value does', hashOfText('{"Version":1}') === hashOfText('{"Version":2}'), false);
 ok('canonical sorts keys at every depth', canonical({ b: [{ z: 1, a: 2 }], a: null }), '{"a":null,"b":[{"a":2,"z":1}]}');
 ok('text that is not json is still hashed', hashOfText('{oops').length, 64);
+ok('a fraction counts as the float32 the game keeps: 0.7 is the 0.699999988079071 it writes back', hashOfText('{"BasePurity":0.7}'), hashOfText('{"BasePurity": 0.699999988079071}'));
+ok('and 0.1 is its 0.10000000149011612', hashOfText('{"PurityBonus":0.1}'), hashOfText('{"PurityBonus":0.10000000149011612}'));
+ok('a fraction that differs as a float32 is another text', [hashOfText('{"BasePurity":0.7}') === hashOfText('{"BasePurity":0.70001}'), hashOfText('{"BasePurity":0.7}') === hashOfText('{"BasePurity":0.6}')], [false, false]);
+ok('whole numbers stay exact, past float32 too', hashOfText('{"Amount":16777217}') === hashOfText('{"Amount":16777216}'), false);
+ok('a bool is the 1 or 0 the game writes', [hashOfText('{"Enabled":true}') === hashOfText('{"Enabled":1}'), hashOfText('{"Enabled":false}') === hashOfText('{"Enabled":0}'), hashOfText('{"Enabled":true}') === hashOfText('{"Enabled":0}')], [true, true, false]);
+ok('canonical spells a fraction as its float32, a whole float and a bool as the game does', canonical({ a: 0.7, b: -1, c: 30.0, d: true, e: 'x' }), '{"a":0.699999988079071,"b":-1,"c":30,"d":1,"e":"x"}');
 
 console.log('versions');
 
@@ -105,6 +111,21 @@ const kept = s.keep({ versionsDays: 0, eventsDays: 0, now: new Date('2030-01-01T
 ok('keep removes them, their blobs, the events and the answered commands', kept, { versions: 4, blobs: 3, events: 2, commands: 2 });
 ok('the current version survives', [s.current('ResearchOwners').version, s.text(s.current('ResearchOwners').hash) !== null], [5, true]);
 ok('a far cut-off removes nothing', s.keep({ versionsDays: 36500, eventsDays: 36500 }), { versions: 0, blobs: 0, events: 0, commands: 0 });
+
+console.log('the game writes a float back widened');
+
+// The site sends BasePurity 0.7; the game keeps a float32 and writes
+// 0.699999988079071. One version -- the candidate, promoted -- not two;
+// and a real change is still a version of its own.
+const pt = (bp, enabled = 1) => `{"Version":3,"PointTypes":[{"Id":"bio","Name":"Bio","Icon":"","Color":"","SortOrder":1,"BasePurity":${bp},"On":${enabled}}]}`;
+ok('the game file at boot is version 1', s.snapshot({ name: 'ResearchPointTypes', text: pt('0.6'), by: 'game', at: '2026-10-31 10:00:00' }).version, 1);
+const site = s.snapshot({ name: 'ResearchPointTypes', text: pt('0.7', 'true'), by: 'covalschi', source: 'admin', status: 'pending', token: '0a0a0a0a0a0a', at: '2026-10-31 10:01:00' });
+ok('the site\'s 0.7 is a pending version 2', [site.version, site.fresh], [2, true]);
+const widened = s.snapshot({ name: 'ResearchPointTypes', text: pt('0.699999988079071'), by: 'bridge:covalschi', at: '2026-10-31 10:01:03' });
+ok('the game\'s 0.699999988079071 (and 1 for true) promotes it: one version, not two', [widened.version, widened.fresh, widened.promoted], [2, false, true]);
+ok('read back at the next boot it is still that version', [s.snapshot({ name: 'ResearchPointTypes', text: pt('0.699999988079071'), by: 'game', at: '2026-10-31 11:00:00' }).version, s.versions('ResearchPointTypes', 10).length], [2, 2]);
+const real = s.snapshot({ name: 'ResearchPointTypes', text: pt('0.699'), by: 'vpp', at: '2026-10-31 11:01:00' });
+ok('a real change is a new version', [real.version, real.fresh], [3, true]);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 base.close();

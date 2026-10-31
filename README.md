@@ -209,7 +209,9 @@ The bridge is the editor and the history of the seven configs of `OpenZone_Resea
 The truth of a config stays the file in the game server's profile; the bridge reads it
 itself when the game boots (`/v1/research/boot`) and after every applied edit
 (`/v1/research/changed`), and keeps every version of the text, deduplicated by a
-canonical hash so the game's rewrite of a candidate promotes it instead of doubling it.
+canonical hash -- keys sorted, a fraction counted as the float32 the game keeps (0.7 and
+the game's 0.699999988079071 are one value), a bool as its 1 or 0 -- so the game's rewrite
+of a candidate promotes it instead of doubling it.
 A change is a candidate: shape-checked, written into `research/xchg/`, announced to the
 game as a `cfg_apply` command in its poll, pending until the game answers
 (`/v1/research/result`) -- applied, or refused with the game's reason and the file left

@@ -163,6 +163,20 @@ try {
   ok('a second result says already', await call('/v1/research/result', { Token: saved.token, Ok: true, Note: 'again' }), { ok: true, already: true });
   ok('history is two versions', (await admin('history', { name: 'ResearchOwners' })).versions.map((v) => [v.version, v.status, v.source]), [[2, 'applied', 'admin'], [1, 'applied', 'game']]);
 
+  // A float: the site writes 0.7, the game keeps a float32 and writes the
+  // file back with 0.699999988079071 and 1 for true. The rewrite promotes
+  // the candidate -- one version -- and a real change is a new one.
+  const pts = { Version: 3, PointTypes: [{ Id: 'bio', Name: 'Bio', Icon: '', Color: '', SortOrder: 1, BasePurity: 0.7, On: true }] };
+  const ptSaved = await admin('save', { name: 'ResearchPointTypes', json: JSON.stringify(pts) });
+  await poll(false);
+  gameWrite('ResearchPointTypes', { ...pts, PointTypes: [{ ...pts.PointTypes[0], BasePurity: 0.699999988079071, On: 1 }] });
+  unlinkSync(join(xdir, ptSaved.file));
+  ok('the game\'s widened 0.7 promotes the site\'s 0.7', await call('/v1/research/changed', { Name: 'ResearchPointTypes', Revision: 3, By: 'bridge:tester' }), { ok: true, version: ptSaved.version });
+  await call('/v1/research/result', { Token: ptSaved.token, Ok: true, Note: 'warnings=0' });
+  ok('the point types have one version, the admin\'s, applied', (await admin('history', { name: 'ResearchPointTypes' })).versions.map((v) => [v.version, v.status, v.source]), [[1, 'applied', 'admin']]);
+  gameWrite('ResearchPointTypes', { ...pts, PointTypes: [{ ...pts.PointTypes[0], BasePurity: 0.65, On: 1 }] });
+  ok('a real change is a new version', await call('/v1/research/changed', { Name: 'ResearchPointTypes', Revision: 4, By: 'vpp' }), { ok: true, version: 2 });
+
   // A VPP edit the bridge did not make: a new version of the game's own.
   gameWrite('ResearchOwners', { ...edited, Owners: [...edited.Owners, { Id: 'bandit', DeviceClasses: [], TerminalClasses: [] }] });
   ok('changed with unknown text is a new version', await call('/v1/research/changed', { Name: 'ResearchOwners', Revision: 3, By: 'vpp' }), { ok: true, version: 3 });
