@@ -250,7 +250,7 @@ export class StorageStore {
       evAdmin: q("SELECT * FROM storage_events WHERE admin != '' AND (? = '' OR server_id = ? OR server_id = '') ORDER BY id DESC LIMIT ?"),
       evOld: q('DELETE FROM storage_events WHERE at < ?'),
       evOldCount: q('SELECT COUNT(*) AS n FROM storage_events WHERE at < ?'),
-      evLastTake: q(`SELECT * FROM storage_events WHERE type = ? AND kind = 'take' ORDER BY id DESC LIMIT 1`),
+      evLastTake: q(`SELECT * FROM storage_events WHERE type = ? AND kind IN ('take', 'out', 'stack_out') ORDER BY id DESC LIMIT 1`),
       evResult: q(`SELECT * FROM storage_events WHERE kind = 'admin_result' AND note LIKE ? ORDER BY id DESC LIMIT 1`),
     };
   }

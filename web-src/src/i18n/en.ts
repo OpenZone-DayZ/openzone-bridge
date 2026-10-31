@@ -88,7 +88,7 @@ export const en = {
   mark_removed_hint: 'Or write this box off: it leaves the live list and keeps everything it held, readable and restorable.',
   c_mark_removed: 'Archive this box? The server did not report it at its last start, so there is no entity in the game left to delete. Nothing it held is thrown away — its items, versions and events stay, and its cargo can still be poured into a box that exists.',
   c_mark_closed: 'Mark this box closed in the database? It is allowed because the server did not report it at its last start: nobody in the game can be looking inside it. Its cargo can then be poured into a box that exists.',
-  b_restore_none: 'There is no closed box to pour this into. Place one, close it, and come back.',
+  b_restore_none: 'There is no closed box to pour this into. Place one and come back.',
   b_restore_empty: 'This archive holds nothing: it was emptied, or already restored elsewhere. Its older versions still show what it had.',
   archived_text: 'This box was deleted on {when} (UTC). Nothing of it was thrown away -- its items, versions and events are kept here, and this page reads them. It has no entity in the game any more, so nothing on it can be changed and live commands do not apply.',
   all_sizes: 'Every size',

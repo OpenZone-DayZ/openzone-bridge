@@ -161,7 +161,7 @@ export function cellOf(i: { loc_type: number; slot: number; row: number; col: nu
 }
 
 export function eventCell(e: Event): string {
-  return e.slot || (e.row >= 0 ? `${e.row},${e.col}` : '');
+  return e.kind === 'drift' ? '' : e.slot || (e.row >= 0 ? `${e.row},${e.col}` : '');
 }
 
 export function groupRoots(items: Item[]): Item[][] {

@@ -176,6 +176,9 @@ s.markClosed(BOX);
 s.events([{ at: '2026-09-19 08:03:00', kind: 'take', box: BOX, uid: '7656', name: 'Stalker', type: 'Paper', qty: 1 }], 'stand');
 ok('lastTake names who took the class last', [s.lastTake('Paper').uid, s.lastTake('Paper').name, s.lastTake('Paper').box_id], ['7656', 'Stalker', BOX]);
 ok('lastTake of a class nobody took is null', s.lastTake('Rag'), null);
+// Under the proxy a box is never open: what leaves it is the boundary's `out`.
+s.events([{ at: '2026-09-19 08:04:00', kind: 'out', box: BOX, uid: '7657', name: 'Bandit', type: 'Rope', qty: 1 }], 'stand');
+ok('lastTake reads the boundary out of the proxy too', [s.lastTake('Rope').uid, s.lastTake('Rope').kind], ['7657', 'out']);
 
 const preview = s.keepPreview({ versionsDays: 0, eventsDays: 0, now: new Date('2030-01-01T00:00:00Z') });
 ok('keepPreview counts what keep would delete', [preview.versions > 0, preview.events > 0], [true, true]);
