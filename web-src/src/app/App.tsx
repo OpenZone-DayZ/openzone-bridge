@@ -183,7 +183,9 @@ function Page({ route }: { route: Route }): ReactNode {
   if (route.kind === 'all') return <JournalPage />;
   if (route.kind === 'core') return <ClassesPage />;
   if (route.kind === 'research') {
-    if (route.page === 'config' && route.arg) return <EditorPage name={route.arg} />;
+    // A page per config: going from one editor to another (back, forward, a
+    // typed address) must not hand the new config the old one's document.
+    if (route.page === 'config' && route.arg) return <EditorPage key={route.arg} name={route.arg} />;
     if (route.page === 'factions') return <FactionsPage />;
     if (route.page === 'statics') return <StaticsPage />;
     if (route.page === 'journal') return <ResearchJournalPage />;
