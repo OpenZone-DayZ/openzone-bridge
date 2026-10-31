@@ -11,7 +11,7 @@ import { Badge, Confirm, Field, Loading, Notice, Panel } from '../ui/bits';
 import { Table, type Col } from '../ui/Table';
 import { useAnswer } from '../storage/pages';
 import { unzipSync, strFromU8 } from 'fflate';
-import { isName, parseText, serialize } from './editor/schema';
+import { isName, parseText, serialize, shortFloat } from './editor/schema';
 
 export type ConfigSummary = {
   name: string; file: string; exists: boolean; size: number; version: number; at: string; by: string; source: string;
@@ -224,7 +224,8 @@ export function StaticsPage() {
   const cols: Col<StaticEntry>[] = [
     { key: 'id', label: s('id'), mono: true, render: (e) => e.id, sort: (e) => e.id },
     { key: 'cls', label: s('r_class'), mono: true, render: (e) => e.className, sort: (e) => e.className },
-    { key: 'pos', label: s('pos'), mono: true, render: (e) => e.pos.join(' '), sort: (e) => e.pos.join(' ') },
+    // The game writes a float widened (339.03 as 339.0299987792969): shown as typed.
+    { key: 'pos', label: s('pos'), mono: true, render: (e) => e.pos.map(shortFloat).join(' '), sort: (e) => e.pos.join(' ') },
     { key: 'spawned', label: s('status'), render: (e) => (e.spawned ? <Badge tone="ok">{s('r_spawned')}</Badge> : <Badge tone="alert">{s('r_pending_spawn')}</Badge>), sort: (e) => (e.spawned ? 1 : 0) },
     { key: 'actions', label: s('actions'), render: (e) => (
       <Confirm small warn label={s('r_respawn')} question={s('r_c_respawn', { id: e.id })} onConfirm={async () => { await run('respawn', { id: e.id }); reload(); }} />

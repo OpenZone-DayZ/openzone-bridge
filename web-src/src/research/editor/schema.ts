@@ -144,6 +144,23 @@ function migrate(name: ConfigName, raw: unknown): unknown {
   return raw;
 }
 
+// A float as the admin meant it. The game keeps a float in 32 bits and
+// writes it back widened -- the 0.7 the site sent comes back as
+// 0.699999988079071 -- so the shortest decimal that is the same float32 is
+// what was typed, and what the game will read again. Only the spelling
+// changes: the float32 the game holds, and the bridge's hash of the text
+// (research-store.js, canonical), stay the same. Whole numbers pass as
+// they are.
+export function shortFloat(x: number): number {
+  if (!Number.isFinite(x) || Number.isInteger(x)) return x;
+  const f = Math.fround(x);
+  for (let p = 1; p <= 9; p++) {
+    const s = Number(f.toPrecision(p));
+    if (Math.fround(s) === f) return s;
+  }
+  return x;
+}
+
 // A fresh element of a list field, every field at its default.
 export function blank(fields: Field[]): Doc {
   const out: Doc = {};
@@ -163,14 +180,14 @@ function valueOf(fld: Field, raw: unknown): unknown {
     }
     case 'float': {
       const n = Number(raw);
-      return raw === undefined || raw === null || raw === '' || !Number.isFinite(n) ? Number(fld.default ?? 0) : n;
+      return raw === undefined || raw === null || raw === '' || !Number.isFinite(n) ? Number(fld.default ?? 0) : shortFloat(n);
     }
     case 'bool':
       return raw === undefined || raw === null ? !!fld.default : raw === true || raw === 1 || raw === 'true' || raw === '1';
     case 'strings':
       return Array.isArray(raw) ? raw.map((x) => (typeof x === 'string' ? x : String(x ?? ''))) : [];
     case 'numbers':
-      return Array.isArray(raw) ? raw.map((x) => Number(x)).filter((x) => Number.isFinite(x)) : [];
+      return Array.isArray(raw) ? raw.map((x) => Number(x)).filter((x) => Number.isFinite(x)).map(shortFloat) : [];
     case 'list':
       return Array.isArray(raw) ? raw.map((x) => normalizeFields(fld.of || [], x)) : [];
     case 'object':

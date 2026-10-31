@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LATEST, NAMES, normalize, parseText, rowsOf, serialize, withRow, blank, RULE } from './schema';
+import { LATEST, NAMES, normalize, parseText, rowsOf, serialize, shortFloat, withRow, blank, RULE } from './schema';
 import { validate, worst } from './validate';
 import { buildTreeCanvas, columnTiers, cyclePath, tierForX, unreachable } from './treeModel';
 
@@ -48,6 +48,24 @@ describe('schema', () => {
     expect(rowsOf('ResearchRules', v3.doc)[0].row.Purity).toBe(0.7);
     const pt2 = parseText('ResearchPointTypes', JSON.stringify({ Version: 2, PointTypes: [{ Id: 'bio', Name: 'Bio' }] }));
     expect([pt2.version, pt2.doc.Version, (pt2.doc.PointTypes as Record<string, unknown>[])[0].BasePurity]).toEqual([2, 3, 0.7]);
+  });
+  it('shows a float the game wrote back widened as the number the admin meant, the same float32', () => {
+    expect([shortFloat(0.699999988079071), shortFloat(0.10000000149011612), shortFloat(4726.06005859375), shortFloat(339.0299987792969)]).toEqual([0.7, 0.1, 4726.06, 339.03]);
+    expect([shortFloat(-1), shortFloat(30), shortFloat(0.5), shortFloat(0)]).toEqual([-1, 30, 0.5, 0]);
+    expect(Math.fround(shortFloat(0.123456789))).toBe(Math.fround(0.123456789));
+    // What the game wrote, read by the editor: the table, the form and the
+    // text show 0.7; the float32 the game holds is the one it wrote.
+    const pts = parseText('ResearchPointTypes', '{"Version": 3, "PointTypes": [{"Id": "bio", "Name": "Bio", "Icon": "", "Color": "", "SortOrder": 1, "BasePurity": 0.699999988079071}]}');
+    const bp = (pts.doc.PointTypes as Record<string, unknown>[])[0].BasePurity as number;
+    expect([bp, Math.fround(bp) === Math.fround(0.699999988079071)]).toEqual([0.7, true]);
+    expect(serialize('ResearchPointTypes', pts.doc)).toContain('"BasePurity": 0.7\n');
+    const rules = parseText('ResearchRules', '{"Version": 3, "Groups": [{"Id": "g", "Rules": [{"Id": "r", "Purity": 0.6000000238418579, "TimeSec": 30.0, "Outputs": [{"Classname": "Rag", "Chance": 0.30000001192092896}]}]}]}');
+    const rule = rowsOf('ResearchRules', rules.doc)[0].row;
+    expect([rule.Purity, rule.TimeSec, (rule.Outputs as Record<string, unknown>[])[0].Chance]).toEqual([0.6, 30, 0.3]);
+    const mods = parseText('ResearchModules', '{"Version": 2, "Modules": [{"Classname": "OZL_Tool_Optics", "PurityBonus": 0.10000000149011612, "DoubleChance": 0.15000000596046448}]}');
+    expect([(mods.doc.Modules as Record<string, unknown>[])[0].PurityBonus, (mods.doc.Modules as Record<string, unknown>[])[0].DoubleChance]).toEqual([0.1, 0.15]);
+    const statics = parseText('ResearchStatics', '{"Version": 1, "Entries": [{"Id": "a", "ClassName": "X", "Pos": [4726.06005859375, 339.0299987792969, 10134.3701171875], "Yaw": 60.5}]}');
+    expect([(statics.doc.Entries as Record<string, unknown>[])[0].Pos, (statics.doc.Entries as Record<string, unknown>[])[0].Yaw]).toEqual([[4726.06, 339.03, 10134.37], 60.5]);
   });
   it('reports text that is not json without throwing', () => {
     expect(parseText('ResearchOwners', '{oops').why).not.toBe('');
