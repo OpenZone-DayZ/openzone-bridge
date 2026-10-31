@@ -409,7 +409,7 @@ function TreeTab({ doc, onChange, selected, setSelected, problems, pointNames, g
       />
       {selected && branches[selected[0]] && (branches[selected[0]].Nodes as Doc[])[selected[1]] && (
         <Panel tight>
-          <RowForm fields={rowFields('ResearchTree')} row={node(selected)} onChange={(row) => onChange(withRow('ResearchTree', doc, selected, row))} suggest={{ classes: [], pointTypes: [...pointNames.keys()], nodeIds: rowsOf('ResearchTree', doc).map((r) => String(r.row.Id)), owners: [], devices: [], index: null, lang: 'uk' }}
+          <RowForm fields={rowFields('ResearchTree')} row={node(selected)} onChange={(row) => onChange(withRow('ResearchTree', doc, selected, row))} suggest={{ classes: [], pointTypes: [...pointNames.keys()], nodeIds: rowsOf('ResearchTree', doc).map((r) => String(r.row.Id)), owners: [], devices: [], index: null, lang: 'ua' }}
             title={<span className="mono">{String(node(selected).Id)}</span>} onDelete={() => onChange(withRow('ResearchTree', doc, selected, null))} />
         </Panel>
       )}

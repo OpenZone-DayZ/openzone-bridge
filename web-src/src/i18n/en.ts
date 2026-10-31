@@ -1,5 +1,5 @@
 // Every word the admin site shows, in English. One key per line: the
-// test reads this file and uk.ts as text and compares the keys.
+// test reads this file and ua.ts as text and compares the keys.
 export const en = {
   title: 'OpenZone Admin',
   kind_storage: 'Storage',

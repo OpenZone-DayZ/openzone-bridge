@@ -57,7 +57,7 @@ export interface ClassHit {
   display: string;
 }
 
-export type Lang = 'en' | 'uk';
+export type Lang = 'en' | 'ua';
 
 // The one way a ClassIndex is built out of JSON: the importer's result,
 // the bridge's stored copy, a file. Accepts v2 rows (five elements, from
@@ -145,7 +145,7 @@ export function isKindOf(index: ClassIndex, cls: string, base: string): boolean 
 // Live search: class names that start with the query first, then names
 // that contain it, then display names (in the chosen language) that
 // contain it. One hit per class.
-export function searchClasses(index: ClassIndex, query: string, limit: number, lang: Lang = 'uk'): ClassHit[] {
+export function searchClasses(index: ClassIndex, query: string, limit: number, lang: Lang = 'ua'): ClassHit[] {
   const needle = query.toLowerCase();
   if (needle === '') return [];
   const prefixHits: ClassHit[] = [];

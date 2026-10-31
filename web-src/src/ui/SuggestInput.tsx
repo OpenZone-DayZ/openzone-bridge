@@ -16,7 +16,7 @@ export function SuggestInput({ value, onChange, options, mono = true, size, inde
     if (index) {
       const bare = needle.replace(/\|.*$/, '');
       if (bare === '') return [];
-      return searchClasses(index, bare, 14, lang || 'uk').filter((h) => h.name !== value).map((h) => ({ value: h.name, note: h.display && h.display !== h.name ? h.display : '' }));
+      return searchClasses(index, bare, 14, lang || 'ua').filter((h) => h.name !== value).map((h) => ({ value: h.name, note: h.display && h.display !== h.name ? h.display : '' }));
     }
     if (!options.length) return [];
     const starts = options.filter((o) => o.toLowerCase().startsWith(needle));

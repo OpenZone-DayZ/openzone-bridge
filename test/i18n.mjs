@@ -35,16 +35,16 @@ function keysOf(file) {
 }
 
 const en = keysOf('en.ts');
-const uk = keysOf('uk.ts');
+const ua = keysOf('ua.ts');
 ok('the English dictionary is not empty', en.keys.size > 50, true);
-ok('no key is declared twice', [en.dupes, uk.dupes], [[], []]);
-ok('every English key exists in Ukrainian', [...en.keys.keys()].filter((k) => !uk.keys.has(k)), []);
-ok('every Ukrainian key exists in English', [...uk.keys.keys()].filter((k) => !en.keys.has(k)), []);
-ok('no word is empty', [...en.keys.entries(), ...uk.keys.entries()].filter(([, v]) => v.trim() === '').map(([k]) => k), []);
+ok('no key is declared twice', [en.dupes, ua.dupes], [[], []]);
+ok('every English key exists in Ukrainian', [...en.keys.keys()].filter((k) => !ua.keys.has(k)), []);
+ok('every Ukrainian key exists in English', [...ua.keys.keys()].filter((k) => !en.keys.has(k)), []);
+ok('no word is empty', [...en.keys.entries(), ...ua.keys.entries()].filter(([, v]) => v.trim() === '').map(([k]) => k), []);
 // A placeholder used in one language must be used in the other: a {v}
 // that only English fills would print a bare number in Ukrainian.
 const holes = (v) => (v.match(/\{[a-z]+\}/g) || []).sort().join(' ');
-ok('placeholders match in both languages', [...en.keys.keys()].filter((k) => uk.keys.has(k) && holes(en.keys.get(k)) !== holes(uk.keys.get(k))), []);
+ok('placeholders match in both languages', [...en.keys.keys()].filter((k) => ua.keys.has(k) && holes(en.keys.get(k)) !== holes(ua.keys.get(k))), []);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -4,7 +4,7 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 import { logout } from '../api/client';
-import { LangContext, rememberLang, rememberedLang, translate, type Key, type Lang } from '../i18n';
+import { LangContext, htmlLang, rememberLang, rememberedLang, translate, type Key, type Lang } from '../i18n';
 import { href, useRoute, type Route } from './router';
 import { SessionProvider, useSession } from './session';
 import { ServersProvider, useServers, type ServerInfo } from './servers';
@@ -28,7 +28,7 @@ export function App() {
     },
     s: (key: Key, vars?: Record<string, string | number>) => translate(lang, key, vars),
   }), [lang]);
-  document.documentElement.lang = lang;
+  document.documentElement.lang = htmlLang(lang);
   return (
     <LangContext.Provider value={i18n}>
       <ToastProvider>
@@ -96,7 +96,7 @@ function Shell() {
           )}
           <Who />
           <span className="lang">
-            <button type="button" className={`small${lang === 'uk' ? ' on' : ''}`} onClick={() => setLang('uk')}>UA</button>
+            <button type="button" className={`small${lang === 'ua' ? ' on' : ''}`} onClick={() => setLang('ua')}>UA</button>
             <button type="button" className={`small${lang === 'en' ? ' on' : ''}`} onClick={() => setLang('en')}>EN</button>
           </span>
         </div>

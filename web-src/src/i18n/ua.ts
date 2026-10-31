@@ -2,7 +2,7 @@
 // test reads this file and en.ts as text and compares the keys.
 import type { en } from './en';
 
-export const uk: Record<keyof typeof en, string> = {
+export const ua: Record<keyof typeof en, string> = {
   title: 'OpenZone Admin',
   kind_storage: 'Сховище',
   kind_research: 'Дослідження',
