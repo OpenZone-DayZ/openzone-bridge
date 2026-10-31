@@ -3,10 +3,11 @@
 // the core writes at every server start (the mods' stringtables read on
 // the server itself), turned into rows by the bridge and kept there per
 // server. The
-// row shape comes from an earlier research editor, grown by a sixth element
-// (the English name beside the original column's); `mods` holds one
-// entry, the server, because the game does not say which addon declared
-// a class.
+// row shape comes from an earlier research editor, grown since: the bridge
+// sends version 4 rows of ten elements (core-classes.js) -- name, parent
+// row, mod, root, the original column's name and the English one, the
+// item's size in cells and its cargo's; `mods` holds one entry, the
+// server, because the game does not say which addon declared a class.
 //
 // Rows are arrays, not objects: tens of thousands of classes travel as a
 // few megabytes this way. `baseIdx` is the index of the PARENT row (-1 when
@@ -60,9 +61,11 @@ export interface ClassHit {
 export type Lang = 'en' | 'ua';
 
 // The one way a ClassIndex is built out of JSON: the importer's result,
-// the bridge's stored copy, a file. Accepts v2 rows (five elements, from
-// the earlier editor) and v3 rows; refuses garbage loudly, because a silently
-// broken index would show "class not found" all over the editor.
+// the bridge's stored copy, a file. Accepts the rows of every version --
+// five elements (v2, the earlier editor), six (v3, the English name) and
+// ten (v4, what the bridge sends now, with the sizes) -- and refuses
+// garbage loudly, because a silently broken index would show "class not
+// found" all over the editor.
 export function parseClassIndexJson(data: unknown): ClassIndex {
   if (typeof data !== 'object' || data === null) throw new Error('ClassIndex: not an object');
   const obj = data as Partial<RawClassIndex>;

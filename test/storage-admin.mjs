@@ -155,7 +155,7 @@ ok('a move into a box that never had a version keeps the source\'s save version'
 s.empty(BOX3, { at: '2026-09-19 08:01:32' });
 ok('a move into an emptied box does not inherit its zero save version', [s.moveRoot(BOX2, 0, BOX3, { at: '2026-09-19 08:01:33' }).ok, s.versionsOf(BOX3)[0].save_version], [true, 142]);
 
-ok('a node with a body is not edited in place', s.editNode(BOX, 0, 0, { quantity: 2 }), { ok: false, why: 'the item carries mod state; reset it to edit' });
+ok('a node with a body is not edited in place', s.editNode(BOX, 0, 0, { quantity: 2 }), { ok: false, why: 'the item carries saved game state; reset it to edit' });
 const ed = s.editNode(BOX, 0, 0, { quantity: 2, health: 50, reset: true }, { at: '2026-09-19 08:02:00', admin: 'owner' });
 ok('with reset the edit is taken', [ed.ok, ed.reset, ed.type], [true, true, 'Paper']);
 ok('the descriptor carries the edit and the body is gone', (() => {
@@ -228,7 +228,7 @@ ok('move is an event on both boxes', [s.eventsOf(BOX)[0].kind, s.eventsOf(BOX2)[
 ok('move refuses in the store\'s words', admin2.move({ from: BOX, root: 0, to: BOX, admin: 'owner' }), { ok: false, why: 'the same box' });
 
 writeFileSync(x.cachePath(BOX2), 'cache');
-ok('edit without reset on an item with a body is refused in the store\'s words', admin2.edit({ id: BOX2, root: 0, node: 0, quantity: 3, admin: 'owner' }), { ok: false, why: 'the item carries mod state; reset it to edit' });
+ok('edit without reset on an item with a body is refused in the store\'s words', admin2.edit({ id: BOX2, root: 0, node: 0, quantity: 3, admin: 'owner' }), { ok: false, why: 'the item carries saved game state; reset it to edit' });
 ok('the refusal left the cache alone', existsSync(x.cachePath(BOX2)), true);
 const e1 = admin2.edit({ id: BOX2, root: 0, node: 0, quantity: 3, reset: true, admin: 'owner' });
 ok('edit with reset answers the version', [e1.ok, e1.reset, e1.type], [true, true, 'Paper']);

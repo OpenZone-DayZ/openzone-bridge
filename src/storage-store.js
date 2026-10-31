@@ -1066,7 +1066,7 @@ export class StorageStore {
     if (q !== null && !(Number.isFinite(q) && q >= 0)) return { ok: false, why: 'bad quantity' };
     if (h !== null && !(Number.isFinite(h) && h >= -1)) return { ok: false, why: 'bad health' };
     if (q === null && h === null) return { ok: false, why: 'nothing to change' };
-    if (nodes[nodeIdx].hasBlob && !reset) return { ok: false, why: 'the item carries mod state; reset it to edit' };
+    if (nodes[nodeIdx].hasBlob && !reset) return { ok: false, why: 'the item carries saved game state; reset it to edit' };
     const edited = nodes.map((n, i) => {
       const m = reset ? { ...n, hasBlob: 0 } : { ...n };
       if (i === nodeIdx) {

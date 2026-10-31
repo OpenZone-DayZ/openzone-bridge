@@ -114,11 +114,16 @@ wrote when it finishes. Run it on purpose with `npm run test:live`.
 
 The bridge is the home of every closed storage box of `OpenZone_Storage`
 (design: `docs/specs/2026-09-19-storage-sql-truth-design.md` in the series
-hub). The game writes a box's contents as one file into
-`$profile:OpenZone/Storage/xchg/` when it closes and posts
-`/v1/storage/close`; the bridge keeps the roots byte for byte in SQLite,
-promotes the file into the box's cache, and answers `/v1/storage/open`
-with that cache, rebuilding it only after an admin changed the version.
+hub). A box in use is a session of the game (a proxy, design
+`docs/specs/2026-09-24-storage-proxy-inventory-design.md`): every turn of it -- the
+roots it changed, removed and added -- is one file in
+`$profile:OpenZone/Storage/xchg/` and one `/v1/storage/op` letter, and the
+session ends with an absolute letter of the whole record that also closes
+the box. The bridge keeps the roots byte for byte in SQLite and answers
+`/v1/storage/open` with the box's cache, rebuilt whenever it no longer
+matches the current version. (`/v1/storage/close`, a box's cargo written
+whole when it closed, was the scheme until 2026-09-26: the bridge still
+serves it, the mod no longer calls it.)
 A root the game cannot read it parks (`/v1/storage/park`) and then asks
 `/v1/storage/open` again with `from`, the count of roots it has built: the
 answer is a file of its own, `<box id>.rest.bin`, holding the rest of the
@@ -155,9 +160,11 @@ to a closed box, taking effect at its next open: `rollback <id> <version>`,
 `shelve <id> <root>` (a root onto the shelf of parked roots), `move <from> <root> <to>`
 (a root into another closed box; it takes a free cell at that box's next open),
 `edit <id> <root> <node> [qty=N] [health=N] [reset]` (quantity and health of one item;
-an item that carries mod state needs `reset`, which drops the mod state of its whole
-tree). Live, answered by the engine within a few seconds: `close <id>`, `remove <id>`
-(a closed box only), `report <id>`; `result <ref>` reads the answer later. Every
+an item the game wrote carries its saved state -- a magazine's cartridges, a chambered
+round, per-part health, whatever mods keep -- and needs `reset`, which drops that state
+from its whole tree and keeps only quantity and health). Live, answered by the engine
+within a few seconds: `close <id>`, `remove <id>` (a closed box only; a personal stash
+leaves the world only with its locker), `report <id>`; `result <ref>` reads the answer later. Every
 change is an event with the admin's name.
 
 ### The admin web
