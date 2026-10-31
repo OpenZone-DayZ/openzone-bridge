@@ -1,7 +1,9 @@
 // The editor of one research config: the rows as a table with a form for
-// the chosen row, the tree or the chains on a canvas, the balance, the
-// text, the history. A change stays on the page until it is sent as a
-// candidate; the game applies it and answers, and the answer lands here.
+// the chosen row, the tree or the chains on a canvas, the balance of the
+// lines, the text, the history. A change stays on the page until it is sent
+// as a candidate; the game applies it and answers, and the answer lands
+// here. What is sent is always the version the mod reads now (LATEST): a
+// file of an older version is shown converted the way the game would.
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../../api/client';
@@ -11,14 +13,15 @@ import { Badge, Confirm, Loading, Notice, Panel } from '../../ui/bits';
 import { Table, type Col } from '../../ui/Table';
 import { awaitCommand, type ConfigText, type ConfigVersion } from '../pages';
 import { RowForm, type Suggest } from './Fields';
-import { balance } from './balance';
+import { balance, canEarn, cyclesFor, type BalanceRow } from './balance';
 import { TreeCanvas } from './TreeCanvas';
 import { ChainCanvas } from './ChainCanvas';
 import {
-  SCHEMA, TREE_BRANCH, RULE_GROUP, blank, idKey, isName, parseText, rowFields, rowsOf, serialize, withRow,
+  CONVERTS, DEFAULT_PURITY, LATEST, SCHEMA, TREE_BRANCH, RULE_GROUP, blank, idKey, isName, parseText, rowFields, rowsOf, serialize, withRow,
   type ConfigName, type Doc, type Field, type RowRef,
 } from './schema';
 import { validate, worst, type Problem, type Severity } from './validate';
+import { classFacts, startPurity, type ClassFacts } from './lines';
 import { useClassIndex } from '../../core/classes/useClassIndex';
 
 // The other configs an editor reads for its checks and pickers, fetched
@@ -36,27 +39,33 @@ function otherDoc(name: ConfigName): Promise<Doc | null> {
 
 const TABLE_COLS: Record<ConfigName, string[]> = {
   ResearchSettings: [],
-  ResearchPointTypes: ['Id', 'Name', 'Category', 'Kind', 'Tier', 'SortOrder'],
-  ResearchOwners: ['Id', 'TerminalClasses', 'DeviceClasses', 'TreeBackground'],
-  ResearchRules: ['Id', 'Enabled', 'Device', 'InputItem', 'Outputs', 'TimeSec', 'RequiredNode'],
+  ResearchPointTypes: ['Id', 'Name', 'Color', 'SortOrder', 'BasePurity'],
+  ResearchOwners: ['Id', 'TerminalClasses', 'DeviceClasses', 'Skin'],
+  ResearchRules: ['Id', 'Enabled', 'Device', 'InputItem', 'Purity', 'Outputs', 'TimeSec', 'RequiredNode'],
   ResearchTree: ['Id', 'Name', 'Tier', 'Parents', 'Cost', 'ResearchTimeSec'],
-  ResearchDataItems: ['Id', 'Enabled', 'Name', 'Points'],
-  ResearchModules: ['Classname', 'PurityBonus', 'Devices'],
-  ResearchSampleTypes: ['Id', 'Enabled', 'Name'],
+  ResearchModules: ['Classname', 'PurityBonus', 'DoubleChance'],
   ResearchStatics: ['Id', 'ClassName', 'Pos', 'Yaw', 'Note'],
 };
 
-const cell = (v: unknown): string => {
-  if (Array.isArray(v)) return v.map((x) => (x && typeof x === 'object' ? summarize(x as Doc) : String(x))).join(', ');
-  if (v && typeof v === 'object') return summarize(v as Doc);
+type Say = (key: Key, vars?: Record<string, string | number>) => string;
+
+// A table cell: lists joined, an element as its class and count, a sample
+// output with its points; a purity that is "not set" named for what the
+// game takes instead.
+const cell = (v: unknown, s: Say, key = ''): string => {
+  if (key === 'Purity' && typeof v === 'number' && v <= 0) return s('e_purity_line');
+  if (key === 'BasePurity' && typeof v === 'number' && v <= 0) return s('e_purity_unset', { p: DEFAULT_PURITY });
+  if (key === 'Skin' && v === '') return s('e_unset');
+  if (Array.isArray(v)) return v.map((x) => (x && typeof x === 'object' ? summarize(x as Doc, s) : String(x))).join(', ');
+  if (v && typeof v === 'object') return summarize(v as Doc, s);
   if (typeof v === 'boolean') return v ? '✓' : '✗';
   return String(v ?? '');
 };
-const summarize = (o: Doc): string => {
+const summarize = (o: Doc, s: Say): string => {
   const cls = o.Classname ?? o.Type ?? o.Id ?? '';
   const n = o.Quantity ?? o.Amount ?? '';
-  const content = o.Content ? ` (${o.Content})` : '';
-  return `${cls}${n !== '' && n !== 1 ? ` ×${n}` : ''}${content}`;
+  const points = typeof o.Points === 'number' && o.Points > 0 ? ` · ${s('e_points_n', { n: o.Points })}` : '';
+  return `${cls}${n !== '' && n !== 1 ? ` ×${n}` : ''}${points}`;
 };
 
 type Tab = 'table' | 'canvas' | 'balance' | 'text' | 'history';
@@ -70,6 +79,8 @@ export function EditorPage({ name }: { name: string }) {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [base, setBase] = useState<Doc | null>(null);
   const [shownVersion, setShownVersion] = useState(0);
+  // The Version the shown text claims, before the editor converted it.
+  const [fileVersion, setFileVersion] = useState(0);
   const [tab, setTab] = useState<Tab>('table');
   const [selected, setSelected] = useState<number[] | null>(null);
   const [group, setGroup] = useState<number | null>(null);
@@ -95,12 +106,13 @@ export function EditorPage({ name }: { name: string }) {
       setDoc(parsed.doc);
       setBase(parsed.doc);
       setShownVersion(c.version);
+      setFileVersion(parsed.version);
       setText(serialize(cfgName, parsed.doc));
       setSelected(null);
       setGroup(null);
       setTab('table');
     });
-    const needed: ConfigName[] = ['ResearchPointTypes', 'ResearchTree', 'ResearchOwners', 'ResearchDataItems', 'ResearchRules'].filter((n) => n !== cfgName) as ConfigName[];
+    const needed: ConfigName[] = (['ResearchPointTypes', 'ResearchTree', 'ResearchOwners', 'ResearchRules'] as ConfigName[]).filter((n) => n !== cfgName);
     Promise.all(needed.map((n) => otherDoc(n).then((d) => [n, d] as const))).then((pairs) => {
       if (alive) setOthers(Object.fromEntries(pairs));
     });
@@ -119,18 +131,23 @@ export function EditorPage({ name }: { name: string }) {
   const pointTypesDoc = cfgName === 'ResearchPointTypes' ? doc : others.ResearchPointTypes ?? null;
   const treeDoc = cfgName === 'ResearchTree' ? doc : others.ResearchTree ?? null;
   const ownersDoc = cfgName === 'ResearchOwners' ? doc : others.ResearchOwners ?? null;
+  const rulesDoc = cfgName === 'ResearchRules' ? doc : others.ResearchRules ?? null;
   // Existence: the server's own classes from its last boot (the index the
   // bridge built out of the dump); null until it arrives.
   const known = useMemo(() => {
     if (!held.index) return null;
     return new Set<string>(held.index.classes.map((row) => row[0]));
   }, [held.index]);
+  // Roles and lines: the index's hierarchy and the mirror of config.cpp.
+  const facts = useMemo(() => classFacts(held.index), [held.index]);
   const ctx = useMemo(() => ({
+    facts,
     classes: known,
     pointTypes: pointTypesDoc ? new Set((pointTypesDoc.PointTypes as Doc[]).map((p) => String(p.Id))) : undefined,
     nodeIds: treeDoc ? new Set((treeDoc.Branches as Doc[]).flatMap((b) => (b.Nodes as Doc[]).map((n) => String(n.Id)))) : undefined,
     owners: ownersDoc ? new Set((ownersDoc.Owners as Doc[]).map((o) => String(o.Id))) : undefined,
-  }), [known, pointTypesDoc, treeDoc, ownersDoc]);
+    ownersDoc,
+  }), [facts, known, pointTypesDoc, treeDoc, ownersDoc]);
   const problems = useMemo(() => (doc && cfgName ? validate(cfgName, doc, ctx) : []), [doc, cfgName, ctx]);
   const suggest = useMemo<Suggest>(() => ({
     classes: known ? [...known] : [],
@@ -144,6 +161,9 @@ export function EditorPage({ name }: { name: string }) {
   const pointNames = useMemo(() => new Map((pointTypesDoc ? (pointTypesDoc.PointTypes as Doc[]) : []).map((p) => [String(p.Id), String(p.Name)])), [pointTypesDoc]);
 
   const dirty = doc !== null && base !== null && serialize(cfgName || 'ResearchSettings', doc) !== serialize(cfgName || 'ResearchSettings', base);
+  // A file of another version than the mod reads is worth sending as it is:
+  // the editor's text is the converted one.
+  const stale = !!cfgName && fileVersion !== LATEST[cfgName];
 
   const change = useCallback((next: Doc) => {
     setDoc(next);
@@ -171,7 +191,8 @@ export function EditorPage({ name }: { name: string }) {
   const counts = { drop: 0, disable: 0, warn: 0, info: 0 } as Record<Severity, number>;
   for (const p of problems) counts[p.severity]++;
   const problemText = s('e_problem_count', counts);
-  const tabs: Tab[] = ['table', ...(cfgName === 'ResearchTree' || cfgName === 'ResearchRules' ? ['canvas' as Tab] : []), ...(cfgName === 'ResearchTree' ? ['balance' as Tab] : []), 'text', 'history'];
+  const lined = cfgName === 'ResearchTree' || cfgName === 'ResearchRules' || cfgName === 'ResearchPointTypes';
+  const tabs: Tab[] = ['table', ...(cfgName === 'ResearchTree' || cfgName === 'ResearchRules' ? ['canvas' as Tab] : []), ...(lined ? ['balance' as Tab] : []), 'text', 'history'];
   const tabKey: Record<Tab, Key> = { table: 'e_table', canvas: cfgName === 'ResearchRules' ? 'e_chain' : 'e_canvas', balance: 'e_balance', text: 'e_text', history: 'e_history' };
 
   return (
@@ -187,26 +208,27 @@ export function EditorPage({ name }: { name: string }) {
           {known && known.size === 0 && <span className="muted small">{s('e_no_classes')}</span>}
           <span className="grow" />
           {dirty && <button type="button" className="ghost" onClick={() => { setDoc(base); setText(serialize(cfgName, base!)); }}>{s('e_discard')}</button>}
-          <Confirm primary disabled={!dirty && shownVersion === loaded.current.version} label={s('e_send')}
+          <Confirm primary disabled={!dirty && !stale && shownVersion === loaded.current.version} label={s('e_send')}
             question={problems.length ? s('e_c_send', { name: cfgName, problems: problemText }) : s('e_c_send_clean', { name: cfgName })} onConfirm={send} />
         </div>
       </Panel>
       {waiting && <Notice>{waiting}</Notice>}
+      {stale && <VersionNotice name={cfgName} version={fileVersion} />}
       <nav className="tabs">
         {tabs.map((t) => <button key={t} type="button" className={`small ${tab === t ? 'primary' : 'ghost'}`} onClick={() => setTab(t)}>{s(tabKey[t])}</button>)}
       </nav>
 
       {tab === 'table' && (cfgName === 'ResearchSettings'
-        ? <SettingsForm doc={doc} onChange={change} suggest={suggest} problems={problems} />
-        : <TableTab name={cfgName} doc={doc} onChange={change} suggest={suggest} problems={problems} selected={selected} setSelected={setSelected} group={group} setGroup={setGroup} grouped={grouped} />)}
+        ? <SettingsForm doc={doc} onChange={change} suggest={suggest} problems={problems} hints={hintsFor(cfgName, doc, facts, pointTypesDoc, s)} />
+        : <TableTab name={cfgName} doc={doc} onChange={change} suggest={suggest} problems={problems} selected={selected} setSelected={setSelected} group={group} setGroup={setGroup} grouped={grouped} hintsOf={(row) => hintsFor(cfgName, row, facts, pointTypesDoc, s)} />)}
 
       {tab === 'canvas' && cfgName === 'ResearchTree' && (
-        <TreeTab doc={doc} onChange={change} selected={selected} setSelected={(p) => { setSelected(p); setGroup(p[0]); }} problems={problems} pointNames={pointNames} group={group ?? 0} setGroup={setGroup} />
+        <TreeTab doc={doc} onChange={change} selected={selected} setSelected={(p) => { setSelected(p); setGroup(p[0]); }} problems={problems} pointNames={pointNames} group={group ?? 0} setGroup={setGroup} suggest={suggest} />
       )}
       {tab === 'canvas' && cfgName === 'ResearchRules' && (
-        <ChainCanvas doc={doc} selected={selected} onSelect={(p) => { setSelected(p); setGroup(p[0]); setTab('table'); }} index={held.index} lang={lang} />
+        <ChainCanvas doc={doc} pointTypes={pointTypesDoc} selected={selected} onSelect={(p) => { setSelected(p); setGroup(p[0]); setTab('table'); }} index={held.index} lang={lang} />
       )}
-      {tab === 'balance' && <BalanceTab tree={doc} others={others} pointTypes={pointTypesDoc} />}
+      {tab === 'balance' && <BalanceTab tree={treeDoc} rules={rulesDoc} pointTypes={pointTypesDoc} owners={ownersDoc} facts={facts} />}
 
       {tab === 'text' && (
         <>
@@ -215,6 +237,7 @@ export function EditorPage({ name }: { name: string }) {
             <button type="button" onClick={() => {
               const parsed = parseText(cfgName, text);
               if (parsed.why) return toast(s('r_not_json', { why: parsed.why }), true);
+              setFileVersion(parsed.version);
               change(parsed.doc);
             }}>{s('e_apply_text')}</button>
           </div>
@@ -227,9 +250,17 @@ export function EditorPage({ name }: { name: string }) {
           if (!c.ok) return toast(`${s('error')}: ${c.why}`, true);
           const parsed = parseText(cfgName, c.text);
           setShownVersion(v);
+          setFileVersion(parsed.version);
           change(parsed.doc);
           setTab('table');
         }} onRestore={async (v) => {
+          // A restore sends the stored text as it is; the game refuses a
+          // version it no longer reads, so such a text goes through the
+          // editor instead (View, then Send).
+          const c = await api<ConfigText>('research', 'config', { name: cfgName, version: v });
+          if (!c.ok) return toast(`${s('error')}: ${c.why}`, true);
+          const claimed = parseText(cfgName, c.text).version;
+          if (claimed !== LATEST[cfgName]) return toast(s('e_restore_old', { v, file: claimed, latest: LATEST[cfgName] }), true);
           const sent = await api<{ token: string; version: number; file: string }>('research', 'restore', { name: cfgName, version: v });
           if (!sent.ok) return toast(`${s('error')}: ${sent.why}`, true);
           setWaiting(s('r_sent', { v: sent.version, token: sent.token }));
@@ -254,20 +285,21 @@ export function EditorPage({ name }: { name: string }) {
   );
 }
 
-function SettingsForm({ doc, onChange, suggest, problems }: { doc: Doc; onChange: (d: Doc) => void; suggest: Suggest; problems: Problem[] }) {
+function SettingsForm({ doc, onChange, suggest, problems, hints }: { doc: Doc; onChange: (d: Doc) => void; suggest: Suggest; problems: Problem[]; hints: Partial<Record<string, ReactNode>> }) {
   const { s } = useLang();
   const fields = SCHEMA.ResearchSettings.fields.filter((f) => f.key !== 'Version');
   return (
     <Panel>
-      <RowForm fields={fields} row={doc} onChange={(row) => onChange({ ...doc, ...row })} suggest={suggest} title={s('nav_configs')} />
+      <RowForm fields={fields} row={doc} onChange={(row) => onChange({ ...doc, ...row })} suggest={suggest} title={s('nav_configs')} hints={hints} />
       {problems.length === 0 && <p className="muted small">{s('e_no_problems')}</p>}
     </Panel>
   );
 }
 
-function TableTab({ name, doc, onChange, suggest, problems, selected, setSelected, group, setGroup, grouped }: {
+function TableTab({ name, doc, onChange, suggest, problems, selected, setSelected, group, setGroup, grouped, hintsOf }: {
   name: ConfigName; doc: Doc; onChange: (d: Doc) => void; suggest: Suggest; problems: Problem[];
   selected: number[] | null; setSelected: (p: number[] | null) => void; group: number | null; setGroup: (g: number | null) => void; grouped: boolean;
+  hintsOf: (row: Doc) => Partial<Record<string, ReactNode>>;
 }) {
   const { s } = useLang();
   const schema = SCHEMA[name];
@@ -275,10 +307,10 @@ function TableTab({ name, doc, onChange, suggest, problems, selected, setSelecte
   const all = rowsOf(name, doc);
   const rows = grouped && group !== null ? all.filter((r) => r.path[0] === group) : all;
   const outer = (doc[schema.rows.key] as Doc[]) || [];
-  const problemAt = (path: number[]) => problems.filter((p) => p.path.startsWith(pathPrefix(name, path)));
+  const problemAt = (path: number[]) => problems.filter((p) => under(p.path, pathPrefix(name, path)));
   const cols: Col<RowRef>[] = [
     ...(grouped && group === null ? [{ key: 'group', label: s(name === 'ResearchTree' ? 'e_branch' : 'e_group'), mono: true, render: (r: RowRef) => String(r.group?.Id ?? ''), sort: (r: RowRef) => String(r.group?.Id ?? '') }] : []),
-    ...TABLE_COLS[name].map((key): Col<RowRef> => ({ key, label: key, mono: key === idKey(name) || key === 'Classname' || key === 'ClassName' || key === 'Device', render: (r) => cell(r.row[key]), sort: (r) => cell(r.row[key]) })),
+    ...TABLE_COLS[name].map((key): Col<RowRef> => ({ key, label: key, mono: key === idKey(name) || key === 'Classname' || key === 'ClassName' || key === 'Device', render: (r) => cell(r.row[key], s, key), sort: (r) => cell(r.row[key], s, key) })),
     { key: 'problems', label: '!', render: (r) => { const ps = problemAt(r.path); const w = worst(ps); return w ? <Badge tone={w === 'drop' || w === 'disable' ? 'bad' : w === 'warn' ? 'alert' : 'muted'}>{ps.length}</Badge> : null; } },
   ];
   const selectedRow = selected ? all.find((r) => r.path.join(':') === selected.join(':')) : undefined;
@@ -341,7 +373,7 @@ function TableTab({ name, doc, onChange, suggest, problems, selected, setSelecte
       <aside className="editor-side">
         {selectedRow ? (
           <>
-            <RowForm fields={fields} row={selectedRow.row} onChange={(row) => onChange(withRow(name, doc, selectedRow.path, row))} suggest={suggest}
+            <RowForm fields={fields} row={selectedRow.row} onChange={(row) => onChange(withRow(name, doc, selectedRow.path, row))} suggest={suggest} hints={hintsOf(selectedRow.row)}
               title={<span className="mono">{String(selectedRow.row[idKey(name)])}</span>}
               onDelete={() => { onChange(withRow(name, doc, selectedRow.path, null)); setSelected(null); }} />
             {problemAt(selectedRow.path).map((p, i) => <div key={i} className={`notice ${p.severity === 'drop' || p.severity === 'disable' ? 'bad' : p.severity === 'warn' ? 'alert' : ''}`}>{p.message}</div>)}
@@ -350,6 +382,12 @@ function TableTab({ name, doc, onChange, suggest, problems, selected, setSelecte
       </aside>
     </div>
   );
+}
+
+// Is a problem's path the row's or inside it? Rules[1] must not claim the
+// problems of Rules[12].
+function under(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}.`);
 }
 
 // The prefix a problem's path starts with for a row: Groups[0].Rules[3] or Owners[2].
@@ -367,14 +405,14 @@ export function useScrollTo(selected: number[] | null) {
   }, [selected]);
 }
 
-function TreeTab({ doc, onChange, selected, setSelected, problems, pointNames, group, setGroup }: {
+function TreeTab({ doc, onChange, selected, setSelected, problems, pointNames, group, setGroup, suggest }: {
   doc: Doc; onChange: (d: Doc) => void; selected: number[] | null; setSelected: (p: number[]) => void; problems: Problem[];
-  pointNames: Map<string, string>; group: number; setGroup: (g: number) => void;
+  pointNames: Map<string, string>; group: number; setGroup: (g: number) => void; suggest: Suggest;
 }) {
   const { s } = useLang();
   const toast = useToast();
   const branches = (doc.Branches as Doc[]) || [];
-  const problemsOf = useCallback((b: number, n: number) => problems.filter((p) => p.path.startsWith(`Branches[${b}].Nodes[${n}]`) || p.path === `node:${String((branches[b]?.Nodes as Doc[])?.[n]?.Id ?? '')}`).length, [problems, branches]);
+  const problemsOf = useCallback((b: number, n: number) => problems.filter((p) => under(p.path, `Branches[${b}].Nodes[${n}]`) || p.path === `node:${String((branches[b]?.Nodes as Doc[])?.[n]?.Id ?? '')}`).length, [problems, branches]);
   const node = (path: number[]): Doc => (branches[path[0]].Nodes as Doc[])[path[1]];
   const patchNode = (path: number[], patch: Doc) => onChange(withRow('ResearchTree', doc, path, { ...node(path), ...patch }));
   if (!branches.length) return <Notice>{s('e_no_branches')}</Notice>;
@@ -409,7 +447,7 @@ function TreeTab({ doc, onChange, selected, setSelected, problems, pointNames, g
       />
       {selected && branches[selected[0]] && (branches[selected[0]].Nodes as Doc[])[selected[1]] && (
         <Panel tight>
-          <RowForm fields={rowFields('ResearchTree')} row={node(selected)} onChange={(row) => onChange(withRow('ResearchTree', doc, selected, row))} suggest={{ classes: [], pointTypes: [...pointNames.keys()], nodeIds: rowsOf('ResearchTree', doc).map((r) => String(r.row.Id)), owners: [], devices: [], index: null, lang: 'ua' }}
+          <RowForm fields={rowFields('ResearchTree')} row={node(selected)} onChange={(row) => onChange(withRow('ResearchTree', doc, selected, row))} suggest={suggest}
             title={<span className="mono">{String(node(selected).Id)}</span>} onDelete={() => onChange(withRow('ResearchTree', doc, selected, null))} />
         </Panel>
       )}
@@ -417,24 +455,45 @@ function TreeTab({ doc, onChange, selected, setSelected, problems, pointNames, g
   );
 }
 
-function BalanceTab({ tree, others, pointTypes }: { tree: Doc; others: Partial<Record<ConfigName, Doc | null>>; pointTypes: Doc | null }) {
+// The lines side by side: what each one gives (its packer and analyzer
+// rules, the points of its samples, the best cycle) against what the tree
+// spends of it, per owner. A spend nobody makes is red; an owner with no
+// station of the line is yellow, not red: carriers travel, and one pays the
+// faction of whoever hands it in, so such a cost is a price in trade (the
+// example packs set them on purpose).
+function BalanceTab({ tree, rules, pointTypes, owners, facts }: { tree: Doc | null; rules: Doc | null; pointTypes: Doc | null; owners: Doc | null; facts: ClassFacts }) {
   const { s } = useLang();
-  const rows = useMemo(() => balance(tree, others.ResearchDataItems ?? null, others.ResearchRules ?? null, pointTypes), [tree, others, pointTypes]);
-  const owners = [...new Set(rows.flatMap((r) => [...r.spentBy.keys()]))].sort();
+  const rows = useMemo(() => balance(tree, rules, pointTypes, owners, facts), [tree, rules, pointTypes, owners, facts]);
+  const ownerCols = [...new Set(rows.flatMap((r) => [...r.spentBy.keys()]))].sort();
+  const short = (r: BalanceRow) => r.spent > 0 && r.bestCycle <= 0;
   return (
-    <Table
-      cols={[
-        { key: 'type', label: s('r_point_type'), mono: true, render: (r) => r.type, sort: (r) => r.type },
-        { key: 'name', label: s('nav_configs'), render: (r) => r.name },
-        { key: 'data', label: s('e_from_data'), num: true, render: (r) => r.fromData, sort: (r) => r.fromData },
-        { key: 'rules', label: s('e_from_rules'), num: true, render: (r) => r.fromRules, sort: (r) => r.fromRules },
-        { key: 'spent', label: s('e_spent'), num: true, render: (r) => <span className={r.spent > r.fromData + r.fromRules ? 'alert' : ''}>{r.spent}</span>, sort: (r) => r.spent },
-        { key: 'nodes', label: s('r_node'), num: true, render: (r) => r.nodes },
-        ...owners.map((o): Col<ReturnType<typeof balance>[number]> => ({ key: `o:${o}`, label: o === '*' ? s('e_any_owner') : o, num: true, render: (r) => r.spentBy.get(o) || '' })),
-      ]}
-      rows={rows}
-      rowKey={(r) => r.type}
-    />
+    <>
+      <p className="muted small">{s('e_balance_help')}</p>
+      <Table
+        cols={[
+          { key: 'type', label: s('r_point_type'), mono: true, render: (r) => <span className={r.known ? '' : 'bad'} title={r.known ? undefined : s('e_line_no_type')}>{r.type}</span>, sort: (r) => r.type },
+          { key: 'name', label: s('name'), render: (r) => r.name },
+          { key: 'purity', label: 'BasePurity', num: true, render: (r) => r.basePurity, sort: (r) => r.basePurity },
+          { key: 'packers', label: s('e_packers'), num: true, render: (r) => <span className={r.packers ? '' : r.spent > 0 ? 'bad' : 'muted'}>{r.packers}</span>, sort: (r) => r.packers },
+          { key: 'points', label: s('e_sample_points'), num: true, render: (r) => (r.packers ? (r.pointsMin === r.pointsMax ? r.pointsMin : `${r.pointsMin}–${r.pointsMax}`) : '—'), sort: (r) => r.pointsMax },
+          { key: 'analyzers', label: s('e_analyzers'), num: true, render: (r) => <span className={r.analyzers ? '' : r.packers || r.spent > 0 ? 'bad' : 'muted'}>{r.analyzers}</span>, sort: (r) => r.analyzers },
+          { key: 'best', label: s('e_best_cycle'), num: true, render: (r) => (r.bestCycle > 0 ? Math.round(r.bestCycle * 100) / 100 : '—'), sort: (r) => r.bestCycle },
+          { key: 'spent', label: s('e_spent'), num: true, render: (r) => <span className={short(r) ? 'bad' : ''} title={short(r) ? s('e_spent_unmade') : undefined}>{r.spent}</span>, sort: (r) => r.spent },
+          { key: 'nodes', label: s('r_node'), num: true, render: (r) => r.nodes },
+          { key: 'cycles', label: s('e_cycles'), num: true, render: (r) => cyclesFor(r) ?? '—', sort: (r) => cyclesFor(r) ?? -1 },
+          ...ownerCols.map((o): Col<BalanceRow> => ({
+            key: `o:${o}`, label: o === '*' ? s('e_any_owner') : o, num: true,
+            render: (r) => {
+              const n = r.spentBy.get(o);
+              if (!n) return '';
+              return canEarn(r, o) ? n : <span className={short(r) ? 'bad' : 'alert'} title={s('e_cannot_earn', { owner: o === '*' ? s('e_any_owner') : o, line: r.type })}>{n}</span>;
+            },
+          })),
+        ]}
+        rows={rows}
+        rowKey={(r) => r.type}
+      />
+    </>
   );
 }
 
@@ -464,6 +523,44 @@ function HistoryTab({ name, history, shown, onView, onRestore }: { name: string;
       pick={(v) => v.version === shown}
     />
   );
+}
+
+// What the shown file is, when it is not the version the mod reads: the
+// game converts some older versions itself and quarantines the rest; the
+// editor shows the text converted either way and sends the latest.
+function VersionNotice({ name, version }: { name: ConfigName; version: number }) {
+  const { s } = useLang();
+  const latest = LATEST[name];
+  if (version > latest) return <Notice tone="bad">{s('e_version_newer', { v: version, latest })}</Notice>;
+  if (version === 0) return <Notice tone="alert">{s('e_version_none', { latest })}</Notice>;
+  if ((CONVERTS[name] || []).includes(version)) return <Notice tone="alert">{s('e_version_converts', { v: version, latest })}</Notice>;
+  return <Notice tone="bad">{s('e_version_quarantine', { v: version, latest })}</Notice>;
+}
+
+// A line under the fields whose meaning is not in their name: what a
+// purity of 0 means, what the game takes instead, where it comes from.
+function hintsFor(name: ConfigName, row: Doc, facts: ClassFacts, pointTypes: Doc | null, s: Say): Partial<Record<string, ReactNode>> {
+  switch (name) {
+    case 'ResearchSettings':
+      return { TreeVisibilityDepth: s('e_hint_depth'), ResearchPost: s('e_hint_post'), BasePost: s('e_hint_post') };
+    case 'ResearchPointTypes':
+      return { Id: s('e_hint_line_id'), BasePurity: s('e_hint_base_purity', { p: DEFAULT_PURITY }), Color: s('e_hint_color') };
+    case 'ResearchOwners':
+      return { Skin: s('e_hint_skin') };
+    case 'ResearchModules':
+      return { PurityBonus: s('e_hint_bonus'), DoubleChance: s('e_hint_double') };
+    case 'ResearchRules': {
+      const input = String((row.InputItem as Doc | undefined)?.Classname ?? '');
+      if (facts.role(input) === 'sample') return { Purity: s('e_hint_purity_analysis'), Outputs: s('e_hint_points') };
+      const sp = startPurity(row, facts, pointTypes);
+      const purity = sp.own ? s('e_hint_purity_own')
+        : sp.line ? s('e_hint_purity_line', { p: sp.purity, line: sp.line })
+          : s('e_hint_purity_default', { p: sp.purity });
+      return { Purity: purity, Outputs: s('e_hint_points') };
+    }
+    default:
+      return {};
+  }
 }
 
 function ProblemsPanel({ problems, onPick }: { problems: Problem[]; onPick: (path: string) => void }) {

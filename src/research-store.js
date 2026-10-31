@@ -1,5 +1,5 @@
 // The research tables (design 2026-09-20, section 6): every version of the
-// nine research configs of the game server, the commands the admin side
+// seven research configs of the game server, the commands the admin side
 // sent to the game and what the game answered, and a journal. The truth of
 // a config is the file in the game's profile; this is its history and its
 // mail. On the bridge's own database, beside the chat and storage tables.

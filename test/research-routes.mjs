@@ -44,7 +44,7 @@ function freePort() {
   });
 }
 
-const NAMES = ['ResearchSettings', 'ResearchPointTypes', 'ResearchOwners', 'ResearchRules', 'ResearchTree', 'ResearchDataItems', 'ResearchModules', 'ResearchSampleTypes', 'ResearchStatics'];
+const NAMES = ['ResearchSettings', 'ResearchPointTypes', 'ResearchOwners', 'ResearchRules', 'ResearchTree', 'ResearchModules', 'ResearchStatics'];
 const OWNERS = { Version: 1, Owners: [{ Id: 'loner', DeviceClasses: ['OZL_Microscope'], TerminalClasses: ['OZL_LabComputer'] }] };
 const gameWrite = (name, value) => writeFileSync(join(dir, `OZ_Research_${name.slice(8)}.json`), JSON.stringify(value, null, 4), 'utf8');
 gameWrite('ResearchOwners', OWNERS);
@@ -140,7 +140,7 @@ try {
   ok('the log says so', log.includes('[research] boot from research-test: 2 configs (2 new versions), revision 1'), true);
 
   const cfgs = (await admin('configs')).configs;
-  ok('configs lists the nine, two on disk at version 1', [cfgs.length, cfgs.filter((c) => c.exists).map((c) => [c.name, c.version, c.by]), cfgs.find((c) => c.name === 'ResearchRules').version], [9, [['ResearchSettings', 1, 'game'], ['ResearchOwners', 1, 'game']], 0]);
+  ok('configs lists the seven, two on disk at version 1', [cfgs.length, cfgs.filter((c) => c.exists).map((c) => [c.name, c.version, c.by]), cfgs.find((c) => c.name === 'ResearchRules').version], [7, [['ResearchSettings', 1, 'game'], ['ResearchOwners', 1, 'game']], 0]);
   const one = await admin('config', { name: 'ResearchOwners' });
   ok('config gives the text of the newest version', [one.version, one.status, JSON.parse(one.text).Owners.length], [1, 'applied', 1]);
   ok('an unknown op is refused', await admin('nope'), { ok: false, why: 'unknown op: nope' });
@@ -169,6 +169,7 @@ try {
   ok('by the one the game names', (await admin('config', { name: 'ResearchOwners' })).by, 'vpp');
   ok('changed of a missing file is refused', await call('/v1/research/changed', { Name: 'ResearchRules', Revision: 3, By: 'vpp' }), { ok: false, why: 'no such file' });
   ok('changed of an unknown name is refused', await call('/v1/research/changed', { Name: 'Rules', Revision: 3, By: 'vpp' }), { ok: false, why: 'unknown config' });
+  ok('and so is a config the lines retired', await call('/v1/research/changed', { Name: 'ResearchDataItems', Revision: 3, By: 'vpp' }), { ok: false, why: 'unknown config' });
 
   // A refusal: the game says no, the version is rejected, the file stays.
   ok('save refuses text that is not json', (await admin('save', { name: 'ResearchOwners', json: '{oops' })).ok, false);

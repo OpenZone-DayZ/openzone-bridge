@@ -17,7 +17,7 @@ export const MAX_COLS = 60;
 
 export type TreeNodeDoc = {
   Id: string; Name: string; Description: string; Icon: string; Tier: number; Parents: string[]; ParentsMode: string;
-  Cost: { Type: string; Amount: number }[]; ItemCost: { Classname: string; Quantity: number; Content: string }[];
+  Cost: { Type: string; Amount: number }[]; ItemCost: { Classname: string; Quantity: number }[];
   ResearchTimeSec: number; RequiredFactions: string[];
 };
 export type TreeBranchDoc = { Id: string; Name: string; Icon: string; SortOrder: number; Owners: string[]; Nodes: TreeNodeDoc[] };
@@ -117,11 +117,12 @@ export function buildTreeCanvas(doc: Doc, branchIdx: number, problemsOf: (branch
 }
 
 // Reachability as the game computes it (OZL_TreeConfig.Unreachable): a
-// node without parents is reachable; with parents, by ParentsMode.
-export function unreachable(doc: Doc): string[] {
+// node without parents is reachable; with parents, by ParentsMode. `keep`
+// leaves out what the game dropped before it looks (Validate, NodeProblem).
+export function unreachable(doc: Doc, keep: (branchIdx: number, nodeIdx: number) => boolean = () => true): string[] {
   const branches = (Array.isArray(doc.Branches) ? doc.Branches : []) as TreeBranchDoc[];
   const all: TreeNodeDoc[] = [];
-  for (const br of branches) for (const n of br.Nodes) all.push(n);
+  branches.forEach((br, bi) => (Array.isArray(br.Nodes) ? br.Nodes : []).forEach((n, ni) => { if (keep(bi, ni)) all.push(n); }));
   const reachable = new Set<string>();
   let changed = true;
   while (changed) {

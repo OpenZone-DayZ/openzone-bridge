@@ -1,5 +1,5 @@
 // The research files of one game server (design 2026-09-20, section 4.1):
-// the nine configs the game keeps in its profile, the faction states, and
+// the seven configs the game keeps in its profile, the faction states, and
 // the exchange directory where the bridge leaves a candidate config for the
 // game to read and delete. One
 // owner per file at any moment: the game writes configs and states, the
@@ -12,11 +12,14 @@ import {
 import { join } from 'node:path';
 import { stampNow } from './storage-wire.js';
 
-// The nine config tags, as the game registers them with the core's editor,
-// in the order the game reads them.
+// The seven config tags, as the game registers them with the core's editor
+// (OZL_Config.TAG_*). The lines of 2026-10-30 retired ResearchDataItems and
+// ResearchSampleTypes: the game neither reads nor sends them, and the
+// versions the bridge kept of them stay in SQL until the retention sweeps
+// them.
 export const NAMES = [
   'ResearchSettings', 'ResearchPointTypes', 'ResearchOwners', 'ResearchRules', 'ResearchTree',
-  'ResearchDataItems', 'ResearchModules', 'ResearchSampleTypes', 'ResearchStatics',
+  'ResearchModules', 'ResearchStatics',
 ];
 
 // The top-level array each config is built around, checked before a
@@ -27,9 +30,7 @@ export const SHAPES = {
   ResearchOwners: 'Owners',
   ResearchRules: 'Groups',
   ResearchTree: 'Branches',
-  ResearchDataItems: 'Items',
   ResearchModules: 'Modules',
-  ResearchSampleTypes: 'Items',
   ResearchStatics: 'Entries',
 };
 

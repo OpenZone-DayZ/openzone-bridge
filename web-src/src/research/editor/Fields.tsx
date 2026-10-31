@@ -20,7 +20,7 @@ export type Suggest = {
   lang: Lang;
 };
 
-const CLASS_KEYS = new Set(['Classname', 'ClassName', 'Device', 'TerminalClasses', 'DeviceClasses', 'RequiredWorn', 'RequiredTools', 'Devices']);
+const CLASS_KEYS = new Set(['Classname', 'ClassName', 'Device', 'TerminalClasses', 'DeviceClasses', 'RequiredWorn', 'RequiredTools']);
 const TYPE_KEYS = new Set(['Type']);
 const NODE_KEYS = new Set(['RequiredNode', 'Parents']);
 const OWNER_KEYS = new Set(['Owners', 'RequiredFactions', 'DefaultOwner']);
@@ -28,7 +28,7 @@ const OWNER_KEYS = new Set(['Owners', 'RequiredFactions', 'DefaultOwner']);
 const isClassKey = (key: string): boolean => CLASS_KEYS.has(key);
 
 function suggestionsFor(key: string, suggest: Suggest): string[] {
-  if (CLASS_KEYS.has(key)) return key === 'Device' || key === 'Devices' || key === 'DeviceClasses' ? [...new Set([...suggest.devices, ...suggest.classes])] : suggest.classes;
+  if (CLASS_KEYS.has(key)) return key === 'Device' || key === 'DeviceClasses' ? [...new Set([...suggest.devices, ...suggest.classes])] : suggest.classes;
   if (TYPE_KEYS.has(key)) return suggest.pointTypes;
   if (NODE_KEYS.has(key)) return suggest.nodeIds;
   if (OWNER_KEYS.has(key)) return suggest.owners;
@@ -38,27 +38,34 @@ function suggestionsFor(key: string, suggest: Suggest): string[] {
 // An input with a short list of matches under it: the class list holds
 // eleven thousand names, so a datalist would be a wall.
 
-export function FieldEditor({ field, value, onChange, suggest, label }: { field: Field; value: unknown; onChange: (v: unknown) => void; suggest: Suggest; label?: ReactNode }) {
+export function FieldEditor({ field, value, onChange, suggest, label, hint }: { field: Field; value: unknown; onChange: (v: unknown) => void; suggest: Suggest; label?: ReactNode; hint?: ReactNode }) {
   const { s } = useLang();
   const options = suggestionsFor(field.key, suggest);
   const head = <span className="k">{label ?? field.key}</span>;
+  const note = hint ? <small className="hint">{hint}</small> : null;
+  const cls = hint ? 'field hinted' : 'field';
   switch (field.kind) {
     case 'string':
       if (field.options) {
+        const v = String(value ?? '');
+        // A value the game does not know stays visible, so the admin sees
+        // what the problem is about.
+        const choices = field.options.includes(v) ? field.options : [...field.options, v];
         return (
-          <label className="field">{head}
-            <select value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}>
-              {field.options.map((o) => <option key={o} value={o}>{o}</option>)}
+          <label className={cls}>{head}
+            <select value={v} onChange={(e) => onChange(e.target.value)}>
+              {choices.map((o) => <option key={o} value={o}>{o === '' ? s('e_unset') : o}</option>)}
             </select>
+            {note}
           </label>
         );
       }
-      if (field.long) return <label className="field wide">{head}<textarea value={String(value ?? '')} rows={3} onChange={(e) => onChange(e.target.value)} /></label>;
-      return <label className="field">{head}<SuggestInput value={String(value ?? '')} onChange={onChange} options={options} mono={options.length > 0 || field.key === 'Id'} index={isClassKey(field.key) ? suggest.index : null} lang={suggest.lang} /></label>;
+      if (field.long) return <label className={`${cls} wide`}>{head}<textarea value={String(value ?? '')} rows={3} onChange={(e) => onChange(e.target.value)} />{note}</label>;
+      return <label className={cls}>{head}<SuggestInput value={String(value ?? '')} onChange={onChange} options={options} mono={options.length > 0 || field.key === 'Id'} index={isClassKey(field.key) ? suggest.index : null} lang={suggest.lang} />{note}</label>;
     case 'int':
-      return <label className="field">{head}<input type="number" step={1} value={Number(value ?? 0)} onChange={(e) => onChange(e.target.value === '' ? 0 : Math.trunc(Number(e.target.value)))} /></label>;
+      return <label className={cls}>{head}<input type="number" step={1} value={Number(value ?? 0)} onChange={(e) => onChange(e.target.value === '' ? 0 : Math.trunc(Number(e.target.value)))} />{note}</label>;
     case 'float':
-      return <label className="field">{head}<input type="number" step="any" value={Number(value ?? 0)} onChange={(e) => onChange(e.target.value === '' ? 0 : Number(e.target.value))} /></label>;
+      return <label className={cls}>{head}<input type="number" step="any" value={Number(value ?? 0)} onChange={(e) => onChange(e.target.value === '' ? 0 : Number(e.target.value))} />{note}</label>;
     case 'bool':
       return <label className="field check-field">{head}<input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} /></label>;
     case 'strings':
@@ -81,7 +88,7 @@ export function FieldEditor({ field, value, onChange, suggest, label }: { field:
         </fieldset>
       );
     case 'list':
-      return <SubTable field={field} rows={Array.isArray(value) ? (value as Doc[]) : []} onChange={onChange} suggest={suggest} />;
+      return <SubTable field={field} rows={Array.isArray(value) ? (value as Doc[]) : []} onChange={onChange} suggest={suggest} hint={note} />;
   }
 }
 
@@ -103,13 +110,14 @@ function StringsEditor({ head, values, onChange, options, addLabel, index, lang 
   );
 }
 
-function SubTable({ field, rows, onChange, suggest }: { field: Field; rows: Doc[]; onChange: (v: Doc[]) => void; suggest: Suggest }) {
+function SubTable({ field, rows, onChange, suggest, hint }: { field: Field; rows: Doc[]; onChange: (v: Doc[]) => void; suggest: Suggest; hint?: ReactNode }) {
   const { s } = useLang();
   const cols = field.of || [];
   const set = (i: number, key: string, v: unknown) => onChange(rows.map((r, j) => (j === i ? { ...r, [key]: v } : r)));
   return (
     <div className="field wide">
       <span className="k">{field.key}</span>
+      {hint}
       <table className="grid sub">
         {rows.length > 0 && (
           <thead><tr>{cols.map((c) => <th key={c.key}>{c.key}</th>)}<th /></tr></thead>
@@ -134,8 +142,9 @@ function SubTable({ field, rows, onChange, suggest }: { field: Field; rows: Doc[
   );
 }
 
-// The whole form of one row: every field of the row's schema, in order.
-export function RowForm({ fields, row, onChange, suggest, onDelete, title }: { fields: Field[]; row: Doc; onChange: (row: Doc) => void; suggest: Suggest; onDelete?: () => void; title: ReactNode }) {
+// The whole form of one row: every field of the row's schema, in order;
+// `hints` puts a line of explanation under a field by its key.
+export function RowForm({ fields, row, onChange, suggest, onDelete, title, hints }: { fields: Field[]; row: Doc; onChange: (row: Doc) => void; suggest: Suggest; onDelete?: () => void; title: ReactNode; hints?: Partial<Record<string, ReactNode>> }) {
   const { s } = useLang();
   return (
     <div className="rowform">
@@ -144,7 +153,7 @@ export function RowForm({ fields, row, onChange, suggest, onDelete, title }: { f
         {onDelete && <Confirm small danger label={s('e_delete_row')} question={s('e_c_delete')} onConfirm={onDelete} />}
       </div>
       <div className="fields">
-        {fields.map((f) => <FieldEditor key={f.key} field={f} value={row[f.key]} onChange={(v) => onChange({ ...row, [f.key]: v })} suggest={suggest} />)}
+        {fields.map((f) => <FieldEditor key={f.key} field={f} value={row[f.key]} onChange={(v) => onChange({ ...row, [f.key]: v })} suggest={suggest} hint={hints?.[f.key]} />)}
       </div>
     </div>
   );

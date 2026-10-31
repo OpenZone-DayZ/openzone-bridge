@@ -1,4 +1,4 @@
-// The research pages: the nine configs and their versions, the factions
+// The research pages: the seven configs and their versions, the factions
 // with their pools, the statics, the journal. A change is a candidate the
 // game applies and answers; the answer lands on the page as it comes.
 
@@ -123,7 +123,7 @@ export function ConfigsPage() {
   );
 }
 
-// A starter pack: a zip holding the nine OZ_Research_*.json files (any
+// A starter pack: a zip holding OZ_Research_*.json files (any
 // folder inside), each sent to the game as a candidate.
 function ZipUpload({ onDone }: { onDone: () => void }) {
   const { s } = useLang();

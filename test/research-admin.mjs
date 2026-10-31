@@ -48,7 +48,7 @@ ok('a missing directory is refused at construction', threw, 'refused');
 const x = new ResearchXchg(dir);
 ok('the exchange directory is research/xchg under it', x.xchgDir, join(dir, 'research', 'xchg'));
 ok('a tag names its file', ResearchXchg.fileOf('ResearchPointTypes'), 'OZ_Research_PointTypes.json');
-ok('the nine names are known, nothing else', [NAMES.length, ResearchXchg.isName('ResearchOwners'), ResearchXchg.isName('Owners')], [9, true, false]);
+ok('the seven names are known, nothing else', [NAMES.length, ResearchXchg.isName('ResearchOwners'), ResearchXchg.isName('Owners'), ResearchXchg.isName('ResearchDataItems'), ResearchXchg.isName('ResearchSampleTypes')], [7, true, false, false, false]);
 const owners = await x.readConfig('ResearchOwners');
 ok('a config is read without its BOM', owners.text.charCodeAt(0), '{'.charCodeAt(0));
 ok('a missing config is null', await x.readConfig('ResearchRules'), null);
@@ -81,7 +81,7 @@ const pushed = [];
 const admin = researchAdmin({ store: s, xchg: x, push: (o) => pushed.push(o), status: () => ({ booted: [], classes: 3 }) });
 
 const cfgs = admin.configs().configs;
-ok('configs lists the nine, with what is on disk', [cfgs.length, cfgs.find((c) => c.name === 'ResearchOwners').exists, cfgs.find((c) => c.name === 'ResearchRules').exists], [9, true, false]);
+ok('configs lists the seven, with what is on disk', [cfgs.length, cfgs.find((c) => c.name === 'ResearchOwners').exists, cfgs.find((c) => c.name === 'ResearchRules').exists], [7, true, false]);
 const got = await admin.config({ name: 'ResearchOwners' });
 ok('config with no version yet reads the file and makes version 1', [got.ok, got.version, got.status, got.source, JSON.parse(got.text).Owners[0].Id], [true, 1, 'applied', 'game', 'loner']);
 ok('config of an unknown name is refused', await admin.config({ name: 'Owners' }), { ok: false, why: 'unknown config' });

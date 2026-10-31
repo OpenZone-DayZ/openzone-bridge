@@ -121,7 +121,7 @@ openssl rand -hex 32
   `STORAGE_KEEP_VERSIONS_DAYS` (14) and `STORAGE_KEEP_EVENTS_DAYS` (90) bound the history.
 - `.env` → `RESEARCH_DIR` — only on a host that also runs the DayZ server with
   `OpenZone_Research`: the server profile's `OpenZone` directory (the one with the
-  `OZ_Research_*.json` files). The bridge keeps every version of the nine configs and
+  `OZ_Research_*.json` files). The bridge keeps every version of the seven configs and
   edits them through the admin site.
 - `.env` → `PROFILE_DIR` — the same directory when `RESEARCH_DIR` is not set: the core
   writes the server's classes there (`classes.tsv`) at every start, and the bridge reads

@@ -91,7 +91,7 @@ publishes the zip; `build:sea` refuses to package without a built site.
 ```
 npm run check     # every file in src/, test/ and scripts/ still parses
 npm test          # every offline suite, named one by one on purpose
-npm run test:web  # the admin site's unit tests (vitest): the editor's schema, checks, tree, chains
+npm run test:web  # the admin site's unit tests (vitest): the editor's schema, checks, lines, balance, tree, chains
 npm run test:live # test/roundtrip.mjs against a running bridge
 ```
 
@@ -169,7 +169,7 @@ and sorting; a box's grid, its contents as a tree with edit, shelf, move and giv
 row, its versions as a timeline with a diff between any two and a rollback, and a live
 panel where the game's answers to report, close and remove land as they come; the shelf,
 find, a player's takings, the health, a journal of admin actions, and a map of boxes on
-the world's grid (`ADMIN_MAP_SIZE`, `ADMIN_MAP_IMAGE`). Research: the nine configs and
+the world's grid (`ADMIN_MAP_SIZE`, `ADMIN_MAP_IMAGE`). Research: the seven configs and
 their editor (below), the factions with their pools, the statics, the journal. A journal
 across both kinds merges them by time; a switch in the header picks the game server when
 the bridge has heard from more than one. Every confirmation is a second press in place;
@@ -204,7 +204,7 @@ The proxy must pass the path without a prefix, e.g.
 
 ## Research configs
 
-The bridge is the editor and the history of the nine configs of `OpenZone_Research`
+The bridge is the editor and the history of the seven configs of `OpenZone_Research`
 (design: `docs/specs/2026-09-20-openzone-research-bridge-design.md` in the series hub).
 The truth of a config stays the file in the game server's profile; the bridge reads it
 itself when the game boots (`/v1/research/boot`) and after every applied edit
@@ -242,12 +242,25 @@ The admin site edits each config as a table of its rows with a form for the chos
 (rules and tree nodes grouped by their groups and branches), checks the text the way the
 game will -- a mirror of every `Validate()` and `Check()`, weighed as the game weighs it:
 dropped, disabled, a warning, a note -- against the server's own class list, the point
-types, the tree and the owners, and sends it as a candidate. The tree has a canvas (a
-column per Tier; a drag between columns sets the Tier, a connection adds a parent unless
-it would close a cycle) and a balance of what grants points against what the tree
-spends, per owner; the rules have a chain canvas with an edge wherever an output feeds
-an input by the station's own match, and the dead samples and unfed inputs named. The
-text and the history are tabs; a starter pack goes in as a zip of the nine files.
+types, the tree and the owners, and sends it as a candidate. It knows the mod by its lines
+(OpenZone Research since 2026-10-30): a rule's sample comes out of a packer of its line
+and goes into an analyzer of its line, which gives the line's carrier; the role of a class
+comes from the server's class index, its line from a mirror of the mod's `config.cpp`
+(`web-src/src/research/editor/lines.ts`), and a line the mirror does not know is a
+warning, never a refusal. A point type is a line, with its `BasePurity`; a rule's
+`Purity` of 0 or below takes it. The editor always writes the version the mod reads
+(point types and rules 3, tree and modules 2, the rest 1) -- the game refuses any other
+from the bridge -- and shows an older file converted the way the game converts it.
+
+The tree has a canvas (a column per Tier; a drag between columns sets the Tier, a
+connection adds a parent unless it would close a cycle); the rules have a chain canvas
+-- packer, analyzer, and the pool of each line at the end -- with an edge wherever an
+output feeds an input by the station's own match, and the dead samples, unfed analyses
+and carriers no point type pays named. The balance, on the point types, rules and tree,
+puts each line's packer and analyzer rules, the points of its samples and its best cycle
+against what the tree spends of it, per owner. The text and the history are tabs; a
+restore of a version the mod no longer reads goes through the editor (view, then send);
+a starter pack goes in as a zip of the config files.
 
 ### The class index (the kind `core`)
 
